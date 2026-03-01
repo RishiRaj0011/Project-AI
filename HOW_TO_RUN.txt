@@ -1,0 +1,56 @@
+# 🚀 HOW TO RUN THE PROJECT
+
+## ✅ Everything is Ready! Just Follow These 2 Steps:
+
+### Step 1: Open Command Prompt
+- Press `Win + R`
+- Type: `cmd`
+- Press Enter
+
+### Step 2: Run These Commands
+```bash
+cd d:\Major-Project-Final-main
+python server.py
+```
+
+### That's It! 🎉
+
+The server will start and show:
+```
+============================================================
+  SERVER RUNNING
+============================================================
+  URL: http://localhost:5000
+  Username: admin
+  Password: admin123
+============================================================
+```
+
+### Step 3: Open Browser
+- Open any browser
+- Go to: http://localhost:5000
+- Login with:
+  - Username: `admin`
+  - Password: `admin123`
+
+---
+
+## 🛑 To Stop Server
+Press `Ctrl + C` in the command prompt
+
+---
+
+## ⚡ Quick Alternative (Double-Click Method)
+
+Just double-click: `RUN_SERVER.bat`
+
+---
+
+## 📝 Notes:
+- ✅ Database is ready
+- ✅ Admin user created
+- ✅ All folders created
+- ✅ Dependencies installed
+- ✅ Configuration complete
+
+Everything is configured and ready to run!

@@ -1,0 +1,24 @@
+# Databases (Very Sensitive)
+*.db
+*.sqlite3
+
+# Environment & Credentials (IMPORTANT)
+.env
+.env.*
+credentials.ini
+secrets.py
+config.py
+
+# Python & System Junk
+__pycache__/
+*.py[cod]
+.vscode/
+venv/
+.venv/
+*.log
+
+# Project Specific Folders
+instance/
+logs/
+learning_data/
+detections/

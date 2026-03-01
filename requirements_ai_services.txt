@@ -1,0 +1,43 @@
+# AI Services Integration - Additional Requirements
+# Add these to your existing requirements.txt
+
+# FAISS Vector Search Service
+faiss-cpu==1.7.4              # CPU-only version (use faiss-gpu for GPU support)
+numpy==1.24.3                 # Required by FAISS
+
+# Liveness Detection Service
+opencv-python==4.8.1.78       # Computer vision library
+dlib==19.24.2                 # Facial landmark detection
+scipy==1.11.4                 # Scientific computing (for distance calculations)
+
+# Frame Enhancement Service
+# opencv-python (already listed above)
+# numpy (already listed above)
+
+# Live Stream Processor Service
+flask-socketio==5.3.5         # WebSocket support for Flask
+python-socketio==5.10.0       # SocketIO client/server
+# opencv-python (already listed above)
+# numpy (already listed above)
+
+# Optional: For better performance
+# faiss-gpu==1.7.4            # GPU-accelerated FAISS (requires CUDA)
+# opencv-contrib-python==4.8.1.78  # Extended OpenCV features
+
+# Installation Instructions:
+# ===========================
+# 
+# Option 1: Install all at once
+# pip install -r requirements_ai_services.txt
+#
+# Option 2: Install individually
+# pip install faiss-cpu numpy opencv-python dlib scipy flask-socketio python-socketio
+#
+# Note: dlib may require CMake and Visual Studio Build Tools on Windows
+# If dlib installation fails, install these first:
+# - CMake: https://cmake.org/download/
+# - Visual Studio Build Tools: https://visualstudio.microsoft.com/downloads/
+#
+# For Linux/Mac:
+# sudo apt-get install cmake  # Ubuntu/Debian
+# brew install cmake          # macOS

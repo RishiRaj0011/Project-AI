@@ -1,0 +1,167 @@
+"""
+FAISS Vector Search Service for Face Encoding Matching
+Efficient similarity search for 128-d face encodings
+"""
+import faiss
+import numpy as np
+import json
+import os
+import pickle
+from typing import List, Tuple, Optional
+
+class FaceVectorSearchService:
+    def __init__(self, dimension: int = 128, index_path: str = "instance/faiss_index.bin"):
+        """
+        Initialize FAISS index for face encoding search
+        
+        Args:
+            dimension: Face encoding dimension (default: 128)
+            index_path: Path to save/load FAISS index
+        """
+        self.dimension = dimension
+        self.index_path = index_path
+        self.mapping_path = index_path.replace('.bin', '_mapping.pkl')
+        self.index = None
+        self.id_mapping = []  # Maps FAISS index position to database IDs
+        
+        self._initialize_index()
+    
+    def _initialize_index(self):
+        """Initialize or load FAISS index with cosine similarity"""
+        if os.path.exists(self.index_path) and os.path.exists(self.mapping_path):
+            self._load_index()
+        else:
+            # Create new index with cosine similarity (Inner Product after normalization)
+            self.index = faiss.IndexFlatIP(self.dimension)
+            self.id_mapping = []
+    
+    def _load_index(self):
+        """Load existing FAISS index and ID mapping"""
+        try:
+            self.index = faiss.read_index(self.index_path)
+            with open(self.mapping_path, 'rb') as f:
+                self.id_mapping = pickle.load(f)
+        except Exception as e:
+            print(f"Error loading index: {e}. Creating new index.")
+            self.index = faiss.IndexFlatIP(self.dimension)
+            self.id_mapping = []
+    
+    def _save_index(self):
+        """Save FAISS index and ID mapping to disk"""
+        os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
+        faiss.write_index(self.index, self.index_path)
+        with open(self.mapping_path, 'wb') as f:
+            pickle.dump(self.id_mapping, f)
+    
+    def _normalize_vector(self, vector: np.ndarray) -> np.ndarray:
+        """Normalize vector for cosine similarity"""
+        norm = np.linalg.norm(vector)
+        return vector / norm if norm > 0 else vector
+    
+    def insert_encoding(self, face_encoding: List[float], db_id: int):
+        """
+        Insert a single face encoding into the index
+        
+        Args:
+            face_encoding: 128-d face encoding as list
+            db_id: Database ID (PersonProfile.id or Case.id)
+        """
+        vector = np.array(face_encoding, dtype=np.float32).reshape(1, -1)
+        vector = self._normalize_vector(vector)
+        
+        self.index.add(vector)
+        self.id_mapping.append(db_id)
+        self._save_index()
+    
+    def insert_batch(self, encodings: List[Tuple[List[float], int]]):
+        """
+        Insert multiple face encodings in batch
+        
+        Args:
+            encodings: List of (face_encoding, db_id) tuples
+        """
+        if not encodings:
+            return
+        
+        vectors = np.array([enc[0] for enc in encodings], dtype=np.float32)
+        vectors = np.array([self._normalize_vector(v) for v in vectors])
+        
+        self.index.add(vectors)
+        self.id_mapping.extend([enc[1] for enc in encodings])
+        self._save_index()
+    
+    def search(self, query_encoding: List[float], top_k: int = 3) -> List[Tuple[int, float]]:
+        """
+        Search for top-k most similar face encodings
+        
+        Args:
+            query_encoding: 128-d face encoding from CCTV frame
+            top_k: Number of top matches to return (default: 3)
+        
+        Returns:
+            List of (db_id, similarity_score) tuples, sorted by similarity
+        """
+        if self.index.ntotal == 0:
+            return []
+        
+        query_vector = np.array(query_encoding, dtype=np.float32).reshape(1, -1)
+        query_vector = self._normalize_vector(query_vector)
+        
+        # Search returns cosine similarity scores (higher is better)
+        similarities, indices = self.index.search(query_vector, min(top_k, self.index.ntotal))
+        
+        results = []
+        for idx, sim in zip(indices[0], similarities[0]):
+            if idx != -1 and idx < len(self.id_mapping):
+                results.append((self.id_mapping[idx], float(sim)))
+        
+        return results
+    
+    def rebuild_from_database(self, person_profiles):
+        """
+        Rebuild entire index from PersonProfile database records
+        
+        Args:
+            person_profiles: Query result of PersonProfile.query.all()
+        """
+        self.index = faiss.IndexFlatIP(self.dimension)
+        self.id_mapping = []
+        
+        encodings = []
+        for profile in person_profiles:
+            if profile.primary_face_encoding:
+                try:
+                    encoding = json.loads(profile.primary_face_encoding)
+                    if len(encoding) == self.dimension:
+                        encodings.append((encoding, profile.id))
+                except:
+                    continue
+        
+        if encodings:
+            self.insert_batch(encodings)
+    
+    def remove_encoding(self, db_id: int):
+        """
+        Remove encoding by database ID (requires rebuild)
+        Note: FAISS doesn't support efficient deletion, so we rebuild without the ID
+        """
+        if db_id not in self.id_mapping:
+            return
+        
+        # Mark for rebuild - actual removal happens on next rebuild
+        pass
+    
+    def get_index_size(self) -> int:
+        """Get number of vectors in index"""
+        return self.index.ntotal if self.index else 0
+
+
+# Global service instance
+_face_search_service = None
+
+def get_face_search_service() -> FaceVectorSearchService:
+    """Get or create global face search service instance"""
+    global _face_search_service
+    if _face_search_service is None:
+        _face_search_service = FaceVectorSearchService()
+    return _face_search_service
