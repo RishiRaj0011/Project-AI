@@ -159,6 +159,7 @@ def create_app(config_class=Config):
     app.template_global()(lambda case: get_primary_photo_url(case))
     app.template_global('file_exists')(verify_file_exists)
     app.template_global('get_status_info')(get_status_display_info)
+    app.template_global('get_case_photo_url')(get_primary_photo_url)  # Fix for profile.html
     app.template_filter('status_badge')(status_badge_filter)
     app.template_filter('status_icon')(status_icon_filter)
     app.template_filter('status_emoji')(status_emoji_filter)

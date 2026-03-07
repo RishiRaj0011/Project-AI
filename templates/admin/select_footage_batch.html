@@ -1,105 +1,247 @@
-{% extends "admin/base.html" %}
-
-{% block title %}Select Footage for Batch Analysis{% endblock %}
+{% extends "base.html" %}
 
 {% block content %}
-<div class="container-fluid mt-4">
-    <div class="row mb-4">
-        <div class="col-md-12">
-            <h2><i class="fas fa-video"></i> Select Footage for Batch Analysis</h2>
-            <p class="text-muted">Case: <strong>{{ case.person_name }}</strong></p>
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-video me-2"></i>Select Footage for Batch Analysis</h2>
+        <a href="{{ url_for('admin.case_detail', case_id=case.id) }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-2"></i>Back to Case
+        </a>
+    </div>
+
+    <!-- Case Info Card -->
+    <div class="card mb-4 border-primary">
+        <div class="card-header bg-primary text-white">
+            <h5><i class="fas fa-user me-2"></i>Target: {{ case.person_name }}</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-3">
+                    {% if case.primary_photo %}
+                    <img src="{{ url_for('static', filename=case.primary_photo.image_path) }}" 
+                         class="img-fluid rounded" alt="{{ case.person_name }}">
+                    {% endif %}
+                </div>
+                <div class="col-md-9">
+                    <p><strong>Age:</strong> {{ case.age or 'Unknown' }}</p>
+                    <p><strong>Last Seen Location:</strong> {{ case.last_seen_location }}</p>
+                    <p><strong>Status:</strong> <span class="badge bg-{{ case.status_color }}">{{ case.status }}</span></p>
+                </div>
+            </div>
         </div>
     </div>
 
+    <!-- Footage Selection Form -->
     <form id="batchAnalysisForm">
-        <div class="row mb-3">
-            <div class="col-md-12">
-                <button type="button" class="btn btn-sm btn-secondary" onclick="selectAll()">
-                    <i class="fas fa-check-square"></i> Select All
-                </button>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="deselectAll()">
-                    <i class="fas fa-square"></i> Deselect All
-                </button>
-                <button type="submit" class="btn btn-primary float-right">
-                    <i class="fas fa-play"></i> Start Batch Analysis
-                </button>
-            </div>
-        </div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="case_id" value="{{ case.id }}">
 
-        <div class="row">
-            {% for footage in all_footage %}
-            <div class="col-md-4 mb-3">
-                <div class="card">
-                    <div class="card-body">
-                        <div class="custom-control custom-checkbox mb-2">
-                            <input type="checkbox" 
-                                   class="custom-control-input footage-checkbox" 
-                                   id="footage_{{ footage.id }}" 
-                                   name="footage_ids[]" 
-                                   value="{{ footage.id }}">
-                            <label class="custom-control-label" for="footage_{{ footage.id }}">
-                                <strong>{{ footage.title }}</strong>
-                            </label>
-                        </div>
-                        
-                        <p class="small mb-1">
-                            <i class="fas fa-map-marker-alt"></i> {{ footage.location_name }}
-                        </p>
-                        <p class="small mb-1">
-                            <i class="fas fa-clock"></i> {{ footage.duration|round(1) }}s
-                        </p>
-                        
-                        {% if footage.id in existing_matches %}
-                        <span class="badge badge-info">
-                            Status: {{ existing_matches[footage.id] }}
-                        </span>
-                        {% endif %}
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5><i class="fas fa-list me-2"></i>Available Surveillance Footage</h5>
+                    <div>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="selectAll()">
+                            <i class="fas fa-check-double me-1"></i>Select All
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAll()">
+                            <i class="fas fa-times me-1"></i>Deselect All
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-info" onclick="selectMatching()">
+                            <i class="fas fa-filter me-1"></i>Auto-Select Matching Location
+                        </button>
                     </div>
                 </div>
             </div>
-            {% endfor %}
+            <div class="card-body">
+                {% if all_footage %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th width="50">
+                                    <input type="checkbox" id="selectAllCheckbox" onchange="toggleAll(this)">
+                                </th>
+                                <th>#</th>
+                                <th>Title</th>
+                                <th>Location</th>
+                                <th>Duration</th>
+                                <th>Quality</th>
+                                <th>Uploaded</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for footage in all_footage %}
+                            <tr class="footage-row {% if case.last_seen_location.lower() in footage.location_name.lower() %}table-warning{% endif %}" 
+                                data-location="{{ footage.location_name.lower() }}">
+                                <td>
+                                    <input type="checkbox" 
+                                           class="footage-checkbox" 
+                                           name="footage_ids[]" 
+                                           value="{{ footage.id }}"
+                                           {% if existing_matches.get(footage.id) %}disabled{% endif %}>
+                                </td>
+                                <td>{{ loop.index }}</td>
+                                <td>
+                                    <strong>{{ footage.title }}</strong>
+                                    {% if case.last_seen_location.lower() in footage.location_name.lower() %}
+                                    <span class="badge bg-warning text-dark ms-2">
+                                        <i class="fas fa-map-marker-alt me-1"></i>Location Match
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <i class="fas fa-map-marker-alt text-danger me-1"></i>
+                                    {{ footage.location_name }}
+                                </td>
+                                <td>{{ footage.formatted_duration }}</td>
+                                <td>
+                                    <span class="badge 
+                                        {% if footage.quality == '4K' %}bg-success
+                                        {% elif footage.quality == 'FHD' %}bg-info
+                                        {% elif footage.quality == 'HD' %}bg-primary
+                                        {% else %}bg-secondary{% endif %}">
+                                        {{ footage.quality }}
+                                    </span>
+                                </td>
+                                <td>{{ footage.created_at.strftime('%d %b %Y') }}</td>
+                                <td>
+                                    {% if existing_matches.get(footage.id) %}
+                                    <span class="badge bg-secondary">
+                                        <i class="fas fa-check me-1"></i>{{ existing_matches[footage.id] }}
+                                    </span>
+                                    {% else %}
+                                    <span class="badge bg-light text-dark">
+                                        <i class="fas fa-clock me-1"></i>Not Analyzed
+                                    </span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    No surveillance footage available. Please upload footage first.
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-footer">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <span id="selectedCount" class="badge bg-primary">0 selected</span>
+                    </div>
+                    <button type="submit" class="btn btn-success btn-lg" id="startAnalysisBtn" disabled>
+                        <i class="fas fa-play me-2"></i>Start Parallel Analysis
+                    </button>
+                </div>
+            </div>
         </div>
     </form>
 </div>
 
 <script>
+const caseLocation = "{{ case.last_seen_location.lower() }}";
+
+function updateSelectedCount() {
+    const checked = document.querySelectorAll('.footage-checkbox:checked:not(:disabled)').length;
+    document.getElementById('selectedCount').textContent = checked + ' selected';
+    document.getElementById('startAnalysisBtn').disabled = checked === 0;
+}
+
+function toggleAll(checkbox) {
+    document.querySelectorAll('.footage-checkbox:not(:disabled)').forEach(cb => {
+        cb.checked = checkbox.checked;
+    });
+    updateSelectedCount();
+}
+
 function selectAll() {
-    document.querySelectorAll('.footage-checkbox').forEach(cb => cb.checked = true);
+    document.querySelectorAll('.footage-checkbox:not(:disabled)').forEach(cb => cb.checked = true);
+    document.getElementById('selectAllCheckbox').checked = true;
+    updateSelectedCount();
 }
 
 function deselectAll() {
-    document.querySelectorAll('.footage-checkbox').forEach(cb => cb.checked = false);
+    document.querySelectorAll('.footage-checkbox:not(:disabled)').forEach(cb => cb.checked = false);
+    document.getElementById('selectAllCheckbox').checked = false;
+    updateSelectedCount();
 }
 
+function selectMatching() {
+    deselectAll();
+    document.querySelectorAll('.footage-row').forEach(row => {
+        const location = row.dataset.location;
+        if (caseLocation && location.includes(caseLocation.split(',')[0].trim())) {
+            const checkbox = row.querySelector('.footage-checkbox');
+            if (checkbox && !checkbox.disabled) {
+                checkbox.checked = true;
+            }
+        }
+    });
+    updateSelectedCount();
+}
+
+// Update count on checkbox change
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.footage-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+    updateSelectedCount();
+});
+
+// Form submission
 document.getElementById('batchAnalysisForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
     const formData = new FormData(this);
-    const selectedIds = formData.getAll('footage_ids[]');
+    const footageIds = [];
+    formData.getAll('footage_ids[]').forEach(id => footageIds.push(id));
     
-    if (selectedIds.length === 0) {
-        alert('Please select at least one footage');
+    if (footageIds.length === 0) {
+        alert('Please select at least one footage to analyze');
         return;
     }
     
-    if (!confirm(`Start batch analysis on ${selectedIds.length} videos?`)) {
+    if (!confirm(`Start parallel analysis on ${footageIds.length} videos?\\n\\nThis will process all selected videos simultaneously.`)) {
         return;
     }
     
-    fetch('{{ url_for("admin.analyze_batch", case_id=case.id) }}', {
+    // Disable button and show loading
+    const btn = document.getElementById('startAnalysisBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Starting Analysis...';
+    
+    // Send request
+    fetch("{{ url_for('admin.trigger_batch_analysis', case_id=case.id) }}", {
         method: 'POST',
-        body: formData
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': formData.get('csrf_token')
+        },
+        body: JSON.stringify({
+            case_id: {{ case.id }},
+            footage_ids: footageIds
+        })
     })
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            window.location.href = data.redirect_url;
+            alert(`✅ Success!\\n\\n${data.message}\\n\\nRedirecting to forensic timeline...`);
+            window.location.href = "{{ url_for('admin.forensic_timeline_batch', case_id=case.id) }}";
         } else {
-            alert('Error: ' + data.error);
+            alert('❌ Error: ' + data.error);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-play me-2"></i>Start Parallel Analysis';
         }
     })
     .catch(error => {
-        alert('Error: ' + error);
+        alert('❌ Error: ' + error);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-play me-2"></i>Start Parallel Analysis';
     });
 });
 </script>

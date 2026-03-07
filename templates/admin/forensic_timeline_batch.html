@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-timeline me-2"></i>Forensic Timeline - {{ case.person_name }}</h2>
+        <div>
+            <a href="{{ url_for('admin.case_detail', case_id=case.id) }}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left me-2"></i>Back to Case
+            </a>
+        </div>
+    </div>
+
+    <!-- Statistics Card -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h5><i class="fas fa-video me-2"></i>Videos Analyzed</h5>
+                    <h2>{{ stats.total_videos }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h5><i class="fas fa-check-circle me-2"></i>Total Detections</h5>
+                    <h2>{{ stats.total_detections }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h5><i class="fas fa-map-marker-alt me-2"></i>Unique Locations</h5>
+                    <h2>{{ stats.unique_locations }}</h2>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-dark">
+                <div class="card-body">
+                    <h5><i class="fas fa-percentage me-2"></i>Avg Confidence</h5>
+                    <h2>{{ (stats.avg_confidence * 100)|round|int }}%</h2>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Timeline Card -->
+    <div class="card">
+        <div class="card-header bg-dark text-white">
+            <h5><i class="fas fa-stream me-2"></i>Chronological Detection Timeline</h5>
+            <small>Sorted by timestamp across all analyzed videos</small>
+        </div>
+        <div class="card-body">
+            {% if timeline_events %}
+            <div class="timeline">
+                {% for event in timeline_events %}
+                <div class="timeline-item mb-4 p-3 border rounded {% if event.confidence >= 0.90 %}border-success{% elif event.confidence >= 0.75 %}border-warning{% else %}border-secondary{% endif %}">
+                    <div class="row">
+                        <!-- Detection Image -->
+                        <div class="col-md-3">
+                            {% if event.detection.frame_path %}
+                            <img src="{{ url_for('static', filename=event.detection.frame_path) }}" 
+                                 class="img-fluid rounded" 
+                                 alt="Detection at {{ event.formatted_timestamp }}"
+                                 onerror="this.src='/static/images/no-image.png'">
+                            {% else %}
+                            <div class="bg-light rounded d-flex align-items-center justify-content-center" style="height: 200px;">
+                                <i class="fas fa-image fa-3x text-muted"></i>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Detection Details -->
+                        <div class="col-md-9">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <h5>
+                                        <span class="badge bg-{{ event.confidence_color }}">
+                                            {{ event.confidence_label }} - {{ event.confidence_percent }}%
+                                        </span>
+                                        <span class="badge bg-secondary ms-2">
+                                            <i class="fas fa-clock me-1"></i>{{ event.formatted_timestamp }}
+                                        </span>
+                                    </h5>
+                                </div>
+                                <div>
+                                    {% if event.detection.evidence_number %}
+                                    <span class="badge bg-dark">
+                                        <i class="fas fa-fingerprint me-1"></i>{{ event.detection.evidence_number }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <!-- Location Info -->
+                            <div class="mb-2">
+                                <strong><i class="fas fa-map-marker-alt text-danger me-2"></i>Location:</strong>
+                                {{ event.footage.location_name }}
+                                <span class="badge bg-info ms-2">Camera #{{ event.footage.id }}</span>
+                            </div>
+
+                            <!-- Confidence Breakdown -->
+                            <div class="mb-2">
+                                <strong><i class="fas fa-chart-bar me-2"></i>Analysis Breakdown:</strong>
+                                <div class="progress" style="height: 25px;">
+                                    {% if event.detection.face_match_score %}
+                                    <div class="progress-bar bg-primary" 
+                                         style="width: {{ (event.detection.face_match_score * 100)|round }}%"
+                                         title="Face: {{ (event.detection.face_match_score * 100)|round }}%">
+                                        Face {{ (event.detection.face_match_score * 100)|round }}%
+                                    </div>
+                                    {% endif %}
+                                    {% if event.detection.clothing_match_score %}
+                                    <div class="progress-bar bg-success" 
+                                         style="width: {{ (event.detection.clothing_match_score * 100)|round }}%"
+                                         title="Clothing: {{ (event.detection.clothing_match_score * 100)|round }}%">
+                                        Clothing {{ (event.detection.clothing_match_score * 100)|round }}%
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <!-- Decision Factors (XAI) -->
+                            {% if event.top_decision_factors %}
+                            <div class="mb-2">
+                                <strong><i class="fas fa-brain me-2"></i>AI Decision Factors:</strong>
+                                <ul class="mb-0">
+                                    {% for factor in event.top_decision_factors %}
+                                    <li><small>{{ factor }}</small></li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+
+                            <!-- Evidence Integrity -->
+                            {% if event.detection.frame_hash %}
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    <i class="fas fa-shield-alt me-1"></i>
+                                    Evidence Hash: <code>{{ event.detection.frame_hash[:16] }}...</code>
+                                </small>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>No detections found yet.</strong> Analysis may still be in progress. Please refresh this page in a few minutes.
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Movement Map (if multiple locations) -->
+    {% if stats.unique_locations > 1 %}
+    <div class="card mt-4">
+        <div class="card-header bg-info text-white">
+            <h5><i class="fas fa-route me-2"></i>Movement Tracking</h5>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-success">
+                <i class="fas fa-check-circle me-2"></i>
+                <strong>Multi-Location Detection:</strong> Target person detected across {{ stats.unique_locations }} different camera locations.
+            </div>
+            <div class="list-group">
+                {% set locations = {} %}
+                {% for event in timeline_events %}
+                    {% if event.footage.location_name not in locations %}
+                        {% set _ = locations.update({event.footage.location_name: []}) %}
+                    {% endif %}
+                    {% set _ = locations[event.footage.location_name].append(event) %}
+                {% endfor %}
+                
+                {% for location, events in locations.items() %}
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="mb-1">
+                                <i class="fas fa-map-marker-alt text-danger me-2"></i>{{ location }}
+                            </h6>
+                            <small class="text-muted">{{ events|length }} detection(s)</small>
+                        </div>
+                        <div>
+                            <span class="badge bg-primary">
+                                First: {{ events[0].formatted_timestamp }}
+                            </span>
+                            <span class="badge bg-secondary">
+                                Last: {{ events[-1].formatted_timestamp }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+.timeline-item {
+    transition: all 0.3s ease;
+}
+
+.timeline-item:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+</style>
+{% endblock %}

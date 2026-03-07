@@ -300,8 +300,15 @@ def register_case():
             status="Pending Approval",  # Wait for admin approval
             user_id=current_user.id,
         )
-        db.session.add(new_case)
-        db.session.commit()
+        try:
+            db.session.add(new_case)
+            db.session.flush()  # Get case ID without committing
+            print(f"✅ Case #{new_case.id} created successfully")
+        except Exception as e:
+            db.session.rollback()
+            print(f"❌ Database error during case creation: {str(e)}")
+            flash('Database error occurred. Please try again.', 'danger')
+            return render_template('register_case_new.html', title="Submit Investigation Request", form=form)
 
         # Handle multiple photo uploads with professional file management
         from file_lifecycle_manager import file_manager
@@ -359,8 +366,6 @@ def register_case():
                     is_primary = (index == primary_photo_index)
                     target_image = TargetImage(case_id=new_case.id, image_path=stored_path, is_primary=is_primary)
                     db.session.add(target_image)
-                    
-                    # Add to validation list
                     uploaded_image_paths.append(stored_path)
                     
                 except Exception as e:
@@ -441,7 +446,8 @@ def register_case():
                 uploaded_video_paths.append(save_path)
 
         try:
-            db.session.commit()
+            db.session.commit()  # Commit case and images
+            print(f"✅ Case #{new_case.id} and {len(uploaded_image_paths)} images saved to database")
             
             # Validate that at least one photo was uploaded successfully
             if not new_case.target_images:
@@ -560,8 +566,10 @@ def register_case():
                                     profile_confidence=profile_data['profile_confidence']
                                 )
                                 db.session.add(person_profile)
+                                db.session.commit()
                                 print(f"✅ Multi-view person profile created for case #{new_case.id} with {profile_data['total_encodings']} encodings")
                             except Exception as e:
+                                db.session.rollback()
                                 print(f"⚠️ Failed to create multi-view person profile: {str(e)}")
                     
                     # Store consistency validation results in database
@@ -599,13 +607,16 @@ def register_case():
                             )
                             db.session.add(issue_record)
                         
+                        db.session.commit()
                         print(f"✅ Person consistency validation results stored for case #{new_case.id}")
                         
                     except Exception as e:
+                        db.session.rollback()
                         print(f"⚠️ Failed to store consistency validation results: {str(e)}")
                         # Don't fail the case if storage fails
                     
                 except Exception as e:
+                    db.session.rollback()
                     print(f"⚠️ Person consistency validation failed: {str(e)}")
                     import traceback
                     traceback.print_exc()
@@ -879,12 +890,16 @@ def register_case():
                 db.session.commit()
                 
             except Exception as ai_error:
+                db.session.rollback()
                 print(f"⚠️ AI analysis (categorization/quality assessment) failed: {str(ai_error)}")
                 import traceback
                 traceback.print_exc()
                 # Fallback to manual approval if AI fails
                 new_case.status = 'Pending Approval'
-                db.session.commit()
+                try:
+                    db.session.commit()
+                except:
+                    db.session.rollback()
             
             # Enhanced notification system for all outcomes
             from models import Notification, User

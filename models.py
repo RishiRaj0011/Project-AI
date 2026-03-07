@@ -664,7 +664,8 @@ class LocationMatch(db.Model):
     footage_id = db.Column(db.Integer, db.ForeignKey("surveillance_footage.id"), nullable=False)
     match_score = db.Column(db.Float, nullable=False)  # 0.0 to 1.0
     distance_km = db.Column(db.Float)  # Distance between locations in km
-    match_type = db.Column(db.String(20), default="location")  # location, proximity, exact
+    match_type = db.Column(db.String(20), default="location")  # location, proximity, exact, manual_batch
+    batch_id = db.Column(db.String(50))  # Batch identifier for multi-video analysis
     status = db.Column(db.String(20), default="pending")  # pending, processing, completed, failed
     ai_analysis_started = db.Column(db.DateTime)
     ai_analysis_completed = db.Column(db.DateTime)

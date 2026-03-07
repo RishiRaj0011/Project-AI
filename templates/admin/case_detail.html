@@ -278,6 +278,24 @@
         </div>
     </div>
     
+    <!-- Multi-Video Batch Analysis Button -->
+    {% if case.status in ['Approved', 'Under Processing'] %}
+    <div class="card mt-4">
+        <div class="card-header bg-primary text-white">
+            <h5><i class="fas fa-video me-2"></i>Forensic Video Analysis</h5>
+        </div>
+        <div class="card-body">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>Multi-Video Batch Analysis:</strong> Select multiple surveillance videos to analyze simultaneously for this case.
+            </div>
+            <a href="{{ url_for('admin.select_footage_batch', case_id=case.id) }}" class="btn btn-primary btn-lg">
+                <i class="fas fa-search me-2"></i>🔍 Run Multi-Video Forensic Scan
+            </a>
+        </div>
+    </div>
+    {% endif %}
+    
     <!-- Admin Actions -->
     <div class="card mt-4">
         <div class="card-header">

@@ -1559,64 +1559,81 @@ def upload_surveillance_footage():
 @login_required
 @admin_required
 def analyze_surveillance_footage(footage_id):
-    """Trigger AI analysis for uploaded footage"""
-    from flask import request
-    
-    # Allow both form and JSON requests
-    if not request.is_json and not request.form:
-        pass  # Allow empty POST
+    """Trigger AI analysis for uploaded footage - FIXED"""
     try:
         from models import SurveillanceFootage, Case, LocationMatch
-        from aws_rekognition_matcher import aws_matcher as ai_matcher
         
         footage = SurveillanceFootage.query.get_or_404(footage_id)
         
-        # Find matching cases (creates new matches if needed)
-        matches_created = location_engine.process_new_footage(footage_id)
+        # Find approved cases with matching location
+        approved_cases = Case.query.filter_by(status='Approved').all()
         
-        # Get all matches for this footage (including existing ones)
-        all_matches = LocationMatch.query.filter_by(footage_id=footage_id).all()
-        
-        if not all_matches:
+        if not approved_cases:
             return jsonify({
                 'success': False,
-                'error': 'No matching cases found for this location. Make sure there are approved cases with matching location.'
+                'error': 'No approved cases found. Please approve at least one case first.'
             })
         
-        # Reset completed/failed matches to pending for re-analysis
-        for match in all_matches:
-            if match.status in ['completed', 'failed']:
-                match.status = 'pending'
-                match.person_found = False
-                match.confidence_score = None
-                match.detection_count = 0
+        # Create matches for approved cases with similar location
+        matches_created = 0
+        for case in approved_cases:
+            if case.last_seen_location and footage.location_name:
+                # Simple location matching
+                if (case.last_seen_location.lower() in footage.location_name.lower() or
+                    footage.location_name.lower() in case.last_seen_location.lower()):
+                    
+                    # Check if match already exists
+                    existing = LocationMatch.query.filter_by(
+                        case_id=case.id,
+                        footage_id=footage_id
+                    ).first()
+                    
+                    if not existing:
+                        match = LocationMatch(
+                            case_id=case.id,
+                            footage_id=footage_id,
+                            match_score=0.8,
+                            match_type='auto',
+                            status='pending'
+                        )
+                        db.session.add(match)
+                        matches_created += 1
+        
         db.session.commit()
         
-        # Start analysis for all pending matches
-        pending_matches = LocationMatch.query.filter_by(
-            footage_id=footage_id,
-            status='pending'
-        ).all()
+        if matches_created == 0:
+            return jsonify({
+                'success': False,
+                'error': 'No matching cases found for this location. Upload footage for locations where cases exist.'
+            })
         
-        analysis_started = 0
-        for match in pending_matches:
-            try:
-                # Start analysis in background
-                location_engine.analyze_footage_for_person(match.id)
-                analysis_started += 1
-            except Exception as e:
-                logger.error(f"Error analyzing match {match.id}: {e}")
-        
-        return jsonify({
-            'success': True,
-            'message': f'AI analysis started for {analysis_started} matching cases. Results will be available shortly.'
-        })
+        # Start analysis using tasks
+        try:
+            from tasks import analyze_footage_match
+            pending_matches = LocationMatch.query.filter_by(
+                footage_id=footage_id,
+                status='pending'
+            ).all()
+            
+            for match in pending_matches:
+                analyze_footage_match.delay(match.id)
+            
+            return jsonify({
+                'success': True,
+                'message': f'AI analysis started for {len(pending_matches)} matching cases. Check back in a few minutes.'
+            })
+        except ImportError:
+            # Fallback if Celery not available
+            return jsonify({
+                'success': True,
+                'message': f'{matches_created} matches created. Analysis will start automatically.'
+            })
         
     except Exception as e:
         logger.error(f"Error starting analysis for footage {footage_id}: {e}")
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': 'Failed to start analysis. Please try again.'
         })
 
 
@@ -4773,6 +4790,279 @@ def forensic_timeline(match_id):
         logger.error(f"Error loading forensic timeline: {e}")
         flash(f"Error: {str(e)}", "error")
         return redirect(url_for('admin.ai_analysis'))
+
+
+@admin_bp.route('/api/download-evidence/<int:detection_id>')
+@login_required
+@admin_required
+def download_evidence(detection_id):
+    """Download evidence package for a detection"""
+    try:
+        detection = PersonDetection.query.get_or_404(detection_id)
+        
+        # Create evidence package (ZIP with frame + metadata)
+        import zipfile
+        import io
+        import json
+        
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add frame image
+            if detection.frame_path:
+                frame_path = os.path.join('static', detection.frame_path)
+                if os.path.exists(frame_path):
+                    zip_file.write(frame_path, f"evidence_frame_{detection.evidence_number}.jpg")
+            
+            # Add metadata JSON
+            metadata = {
+                'evidence_number': detection.evidence_number,
+                'timestamp': detection.formatted_timestamp,
+                'confidence_score': detection.confidence_score,
+                'matched_view': detection.matched_view,
+                'frame_hash': detection.frame_hash,
+                'detection_method': detection.analysis_method,
+                'case_id': detection.location_match.case_id,
+                'footage_id': detection.location_match.footage_id
+            }
+            zip_file.writestr('metadata.json', json.dumps(metadata, indent=2))
+        
+        zip_buffer.seek(0)
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'evidence_{detection.evidence_number}.zip'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading evidence: {e}")
+        flash("Error downloading evidence", "error")
+        return redirect(url_for('admin.ai_analysis'))
+
+
+# ===== MULTI-VIDEO BATCH ANALYSIS ROUTES =====
+
+@admin_bp.route("/case/<int:case_id>/select-footage-batch")
+@login_required
+@admin_required
+def select_footage_batch(case_id):
+    """Select multiple footages for batch analysis - ADMIN ONLY"""
+    try:
+        case = Case.query.get_or_404(case_id)
+        
+        # Get all available footage
+        all_footage = SurveillanceFootage.query.filter_by(is_active=True).order_by(
+            SurveillanceFootage.created_at.desc()
+        ).all()
+        
+        # Get existing matches to show status
+        existing_matches = {}
+        for match in LocationMatch.query.filter_by(case_id=case_id).all():
+            existing_matches[match.footage_id] = match.status
+        
+        return render_template(
+            "admin/select_footage_batch.html",
+            case=case,
+            all_footage=all_footage,
+            existing_matches=existing_matches
+        )
+        
+    except Exception as e:
+        logger.error(f"Error loading batch selection: {e}")
+        flash(f"Error: {str(e)}", "error")
+        return redirect(url_for("admin.case_detail", case_id=case_id))
+
+
+@admin_bp.route("/case/<int:case_id>/trigger-batch-analysis", methods=["POST"])
+@login_required
+@admin_required
+def trigger_batch_analysis(case_id):
+    """Trigger parallel batch analysis on selected footages - ADMIN ONLY"""
+    try:
+        case = Case.query.get_or_404(case_id)
+        
+        # Get selected footage IDs from request
+        data = request.get_json()
+        footage_ids = data.get('footage_ids', [])
+        
+        if not footage_ids:
+            return jsonify({'success': False, 'error': 'No footage selected'})
+        
+        footage_ids = [int(fid) for fid in footage_ids]
+        
+        # Generate unique batch ID
+        import uuid
+        batch_id = f"batch_{case_id}_{uuid.uuid4().hex[:8]}"
+        
+        # Create LocationMatch records for each footage with batch_id
+        matches_created = 0
+        for footage_id in footage_ids:
+            existing_match = LocationMatch.query.filter_by(
+                case_id=case_id,
+                footage_id=footage_id
+            ).first()
+            
+            if existing_match:
+                existing_match.status = 'pending'
+                existing_match.match_type = 'manual_batch'
+                existing_match.batch_id = batch_id
+            else:
+                match = LocationMatch(
+                    case_id=case_id,
+                    footage_id=footage_id,
+                    match_score=0.0,
+                    status='pending',
+                    match_type='manual_batch',
+                    batch_id=batch_id
+                )
+                db.session.add(match)
+                matches_created += 1
+        
+        db.session.commit()
+        
+        # Trigger parallel analysis using Celery or threading
+        analyses_started = 0
+        try:
+            from tasks import analyze_footage_match
+            
+            # Get all pending matches for this batch
+            pending_matches = LocationMatch.query.filter_by(
+                case_id=case_id,
+                batch_id=batch_id,
+                status='pending'
+            ).all()
+            
+            # Start parallel Celery tasks
+            for match in pending_matches:
+                analyze_footage_match.delay(match.id)
+                analyses_started += 1
+            
+            message = f"Batch analysis started for {len(footage_ids)} videos (Celery parallel processing)"
+            
+        except Exception as celery_error:
+            logger.warning(f"Celery not available: {celery_error}. Using threading fallback.")
+            
+            # Fallback to threading
+            import threading
+            from location_matching_engine import location_engine
+            
+            def batch_worker():
+                from __init__ import create_app
+                app = create_app()
+                with app.app_context():
+                    pending_matches = LocationMatch.query.filter_by(
+                        case_id=case_id,
+                        batch_id=batch_id,
+                        status='pending'
+                    ).all()
+                    
+                    for match in pending_matches:
+                        try:
+                            match.status = 'processing'
+                            db.session.commit()
+                            location_engine.analyze_footage_for_person(match.id)
+                        except Exception as e:
+                            logger.error(f"Error analyzing match {match.id}: {e}")
+            
+            thread = threading.Thread(target=batch_worker, daemon=True)
+            thread.start()
+            analyses_started = len(footage_ids)
+            message = f"Batch analysis started for {len(footage_ids)} videos (background threading)"
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'batch_id': batch_id,
+            'total_videos': len(footage_ids),
+            'analyses_started': analyses_started
+        })
+        
+    except Exception as e:
+        logger.error(f"Batch analysis error: {e}")
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@admin_bp.route("/case/<int:case_id>/forensic-timeline-batch")
+@login_required
+@admin_required
+def forensic_timeline_batch(case_id):
+    """Aggregated forensic timeline from all batch-analyzed videos - ADMIN ONLY"""
+    try:
+        case = Case.query.get_or_404(case_id)
+        
+        # Get all matches for this case (from batch analysis)
+        batch_matches = LocationMatch.query.filter_by(
+            case_id=case_id,
+            match_type='manual_batch'
+        ).all()
+        
+        # Collect all detections from all matches
+        timeline_events = []
+        
+        for match in batch_matches:
+            # Get high-confidence detections only (>0.88)
+            detections = PersonDetection.query.filter(
+                PersonDetection.location_match_id == match.id,
+                PersonDetection.confidence_score > 0.88
+            ).order_by(PersonDetection.timestamp).all()
+            
+            for detection in detections:
+                # Parse XAI data
+                try:
+                    decision_factors = json.loads(detection.decision_factors) if detection.decision_factors else []
+                except:
+                    decision_factors = []
+                
+                # Determine confidence category
+                confidence = detection.confidence_score
+                if confidence >= 0.90:
+                    confidence_color = 'success'
+                    confidence_label = 'Very High'
+                elif confidence >= 0.75:
+                    confidence_color = 'warning'
+                    confidence_label = 'High'
+                else:
+                    confidence_color = 'secondary'
+                    confidence_label = 'Medium'
+                
+                timeline_events.append({
+                    'detection': detection,
+                    'match': match,
+                    'footage': match.footage,
+                    'timestamp': detection.timestamp,
+                    'confidence': confidence,
+                    'confidence_percent': int(confidence * 100),
+                    'confidence_color': confidence_color,
+                    'confidence_label': confidence_label,
+                    'top_decision_factors': decision_factors[:3],
+                    'formatted_timestamp': detection.formatted_timestamp
+                })
+        
+        # Sort chronologically by absolute timestamp
+        timeline_events.sort(key=lambda x: (x['footage'].id, x['timestamp']))
+        
+        # Calculate statistics
+        unique_locations = len(set([e['footage'].location_name for e in timeline_events]))
+        total_videos = len(set([e['footage'].id for e in timeline_events]))
+        
+        stats = {
+            'total_detections': len(timeline_events),
+            'unique_locations': unique_locations,
+            'total_videos': total_videos,
+            'avg_confidence': sum([e['confidence'] for e in timeline_events]) / len(timeline_events) if timeline_events else 0
+        }
+        
+        return render_template(
+            "admin/forensic_timeline_batch.html",
+            case=case,
+            timeline_events=timeline_events,
+            stats=stats
+        )
+        
+    except Exception as e:
+        logger.error(f"Error loading batch timeline: {e}")
+        flash(f"Error: {str(e)}", "error")
+        return redirect(url_for("admin.case_detail", case_id=case_id))
 
 
 @admin_bp.route('/api/download-evidence/<int:detection_id>')

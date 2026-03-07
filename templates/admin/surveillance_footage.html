@@ -90,7 +90,7 @@
         {% if footage_list.items %}
         {% for footage in footage_list.items %}
         <div class="col-lg-4 col-md-6 mb-4">
-            <div class="card h-100 shadow-sm">
+            <div class="card h-100 shadow-sm" data-footage-id="{{ footage.id }}">
                 <div class="card-header bg-light">
                     <div class="d-flex justify-content-between align-items-center">
                         <h6 class="mb-0 text-truncate">{{ footage.title }}</h6>
@@ -106,6 +106,11 @@
                                     <i class="fas fa-play me-2"></i>Play Video
                                 </a></li>
                                 <li><hr class="dropdown-divider"></li>
+                                {% if footage.matches %}
+                                <li><a class="dropdown-item text-info" href="{{ url_for('admin.forensic_timeline', match_id=footage.matches[0].id) }}">
+                                    <i class="fas fa-chart-line me-2"></i>View Results
+                                </a></li>
+                                {% endif %}
                                 <li><a class="dropdown-item text-success" href="#" onclick="openTargetedFindModal({{ footage.id }})">
                                     <i class="fas fa-search-plus me-2"></i>🔍 Targeted Find
                                 </a></li>
@@ -167,7 +172,7 @@
                             {{ footage.created_at.strftime('%d %b %Y') }}
                         </small>
                         {% set has_matches = footage.matches|selectattr('person_found', 'equalto', true)|list|length > 0 %}
-                        <span class="badge bg-{{ 'success' if has_matches else 'primary' if footage.matches else 'warning' }}">
+                        <span class="badge status-badge bg-{{ 'success' if has_matches else 'primary' if footage.matches else 'warning' }}">
                             {% if has_matches %}
                                 Success
                             {% elif footage.matches %}
@@ -303,6 +308,12 @@ function openTargetedFindModal(footageId) {
             const select = document.getElementById('targetedCaseSelect');
             select.innerHTML = '<option value="">-- Select Approved Case --</option>';
             
+            if (!data.cases || data.cases.length === 0) {
+                select.innerHTML = '<option value="">No Approved Cases Found</option>';
+                alert('⚠️ No Approved Cases\n\nPlease register and approve at least one case before using Targeted Find.');
+                return;
+            }
+            
             data.cases.forEach(c => {
                 const option = document.createElement('option');
                 option.value = c.id;
@@ -314,7 +325,7 @@ function openTargetedFindModal(footageId) {
         })
         .catch(error => {
             console.error('Error loading cases:', error);
-            alert('Error loading approved cases');
+            alert('❌ Error loading approved cases. Please try again.');
         });
 }
 
@@ -333,7 +344,8 @@ document.getElementById('targetedCaseSelect')?.addEventListener('change', functi
                     <strong>${data.person_name}</strong><br>
                     <small>Age: ${data.age || 'Unknown'} | Location: ${data.location}</small>
                 `;
-            });
+            })
+            .catch(error => console.error('Error:', error));
     } else {
         btn.disabled = true;
         document.getElementById('casePreview').classList.add('d-none');
@@ -345,7 +357,7 @@ document.getElementById('startDeepScanBtn')?.addEventListener('click', function(
     if (!caseId || !currentFootageId) return;
     
     this.disabled = true;
-    this.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Starting...';
+    this.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Starting Deep Scan...';
     
     fetch('/admin/api/targeted-analysis', {
         method: 'POST',
@@ -361,9 +373,15 @@ document.getElementById('startDeepScanBtn')?.addEventListener('click', function(
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            alert(`✅ Deep Scan Started!\n\n${data.message}\n\nThis will scan every frame for maximum accuracy.`);
+            alert(`✅ Deep Scan Started!\n\n${data.message}\n\nThis will scan every frame for maximum accuracy. Check back in a few minutes.`);
             bootstrap.Modal.getInstance(document.getElementById('targetedFindModal')).hide();
-            location.reload();
+            
+            // Update status badge to Processing
+            const badge = document.querySelector(`[data-footage-id="${currentFootageId}"] .status-badge`);
+            if (badge) {
+                badge.className = 'badge bg-info status-badge';
+                badge.innerHTML = '<i class="fas fa-hourglass-half me-1"></i>Processing';
+            }
         } else {
             alert(`❌ Error: ${data.error}`);
             this.disabled = false;
@@ -372,56 +390,75 @@ document.getElementById('startDeepScanBtn')?.addEventListener('click', function(
     })
     .catch(error => {
         console.error('Error:', error);
-        alert('❌ Error starting deep scan');
+        alert('❌ Error starting deep scan. Please try again.');
         this.disabled = false;
         this.innerHTML = '<i class="fas fa-search-plus me-2"></i>Start Deep Scan';
     });
 });
 
 function viewFootageDetails(footageId) {
-    // Load footage details via AJAX
     fetch(`/admin/surveillance-footage/${footageId}/details`)
         .then(response => response.json())
         .then(data => {
-            document.getElementById('footageDetailsContent').innerHTML = data.html;
-            new bootstrap.Modal(document.getElementById('footageDetailsModal')).show();
-        })
-        .catch(error => {
-            console.error('Error loading footage details:', error);
-            alert('Error loading footage details');
-        });
-}
-
-function startAIAnalysis(footageId) {
-    if (confirm('🤖 Start AI Analysis?\n\nThis will:\n- Analyze all frames in the video\n- Match against all approved cases\n- Generate detection results\n\nThis may take a few minutes.')) {
-        // Get CSRF token
-        let csrfToken = '';
-        const metaToken = document.querySelector('meta[name="csrf-token"]');
-        if (metaToken) {
-            csrfToken = metaToken.getAttribute('content');
-        }
-        
-        const headers = {'Content-Type': 'application/json'};
-        if (csrfToken) {
-            headers['X-CSRFToken'] = csrfToken;
-        }
-        
-        fetch(`/admin/surveillance-footage/${footageId}/analyze`, {
-            method: 'POST',
-            headers: headers
-        })
-        .then(response => response.json())
-        .then(data => {
             if (data.success) {
-                alert(`✅ AI Analysis Started!\n\n${data.message}\n\nRefresh the page in a few minutes to see results.`);
-                location.reload();
+                document.getElementById('footageDetailsContent').innerHTML = data.html;
+                new bootstrap.Modal(document.getElementById('footageDetailsModal')).show();
             } else {
-                alert(`❌ Error: ${data.error}`);
+                alert('❌ Error loading footage details');
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('❌ Error starting AI analysis');
+            alert('❌ Error loading footage details');
+        });
+}
+
+function startAIAnalysis(footageId) {
+    if (confirm('🤖 Start AI Analysis?\n\nThis will:\n- Find all approved cases with matching location\n- Analyze video frames\n- Generate detection results\n\nThis may take a few minutes. Continue?')) {
+        
+        // Show loading state
+        const btn = event.target.closest('button');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        }
+        
+        fetch(`/admin/surveillance-footage/${footageId}/analyze`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || ''
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert(`✅ Success!\n\n${data.message}`);
+                
+                // Update status badge
+                const badge = document.querySelector(`[data-footage-id="${footageId}"] .status-badge`);
+                if (badge) {
+                    badge.className = 'badge bg-info status-badge';
+                    badge.innerHTML = '<i class="fas fa-hourglass-half me-1"></i>Processing';
+                }
+                
+                // Reload after 2 seconds
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                alert(`❌ Error\n\n${data.error}`);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-brain"></i>';
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('❌ Failed to start analysis. Please check:\n\n1. Are there approved cases?\n2. Do case locations match this footage location?\n3. Try again in a moment.');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-brain"></i>';
+            }
         });
     }
 }
@@ -437,6 +474,7 @@ function deleteFootage(footageId) {
         })
         .then(response => {
             if (response.ok) {
+                alert('✅ Footage deleted successfully');
                 window.location.reload();
             } else {
                 alert('❌ Error deleting footage');
