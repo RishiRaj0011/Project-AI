@@ -350,6 +350,7 @@ def register_case():
                 # Store file using professional file manager
                 try:
                     stored_path = file_manager.store_file(photo_file, new_case.id, "images")
+                    stored_path = stored_path.replace('\\', '/')  # Normalize path
                     
                     # LIVENESS DETECTION - Check for photo spoofing
                     full_path = os.path.join("static", stored_path)
@@ -1140,25 +1141,46 @@ def profile():
 def case_details(case_id):
     """View detailed information about a specific case"""
     try:
-        case = Case.query.get_or_404(case_id)
+        # Eager load everything to prevent lazy loading errors
+        case = Case.query.options(
+            db.joinedload(Case.target_images),
+            db.joinedload(Case.search_videos)
+        ).get_or_404(case_id)
         
-        # Get manual analysis detections (if any)
+        # Try to load person_profile separately (may not exist)
+        person_profile = None
         try:
-            from models import PersonDetection
+            from models import PersonProfile
+            person_profile = PersonProfile.query.filter_by(case_id=case_id).first()
+        except Exception as profile_error:
+            print(f"⚠️ PersonProfile not available: {profile_error}")
+        
+        # Get detections if available
+        all_detections = []
+        location_matches = []
+        try:
+            from models import PersonDetection, LocationMatch
             all_detections = PersonDetection.query.filter_by(case_id=case_id).order_by(
                 PersonDetection.confidence_score.desc()
             ).all()
-        except:
-            all_detections = []
+            location_matches = LocationMatch.query.filter_by(case_id=case_id).order_by(
+                LocationMatch.created_at.desc()
+            ).all()
+        except Exception as det_error:
+            print(f"⚠️ Detections not available: {det_error}")
         
         return render_template(
             "case_details.html", 
             case=case,
-            detections=all_detections
+            person_profile=person_profile,
+            detections=all_detections,
+            location_matches=location_matches
         )
         
     except Exception as e:
-        print(f"Error loading case details {case_id}: {str(e)}")
+        print(f"❌ CRITICAL ERROR loading case {case_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         flash("Error loading case details. Please try again.", "error")
         return redirect(url_for("main.profile"))
 

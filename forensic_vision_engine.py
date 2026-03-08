@@ -45,10 +45,10 @@ class ForensicVisionEngine:
         
         self.temporal_buffer[face_id].append(confidence)
         
-        # Require at least 5 consistent frames with avg confidence >= 0.88
+        # Require at least 5 consistent frames with avg confidence >= 0.80
         if len(self.temporal_buffer[face_id]) >= 5:
             avg_confidence = sum(self.temporal_buffer[face_id]) / len(self.temporal_buffer[face_id])
-            return avg_confidence >= 0.88
+            return avg_confidence >= 0.80
         
         return False
     
@@ -68,7 +68,7 @@ class ForensicVisionEngine:
                 number_of_times_to_upsample=2
             )
             
-            if not face_locations:
+            if face_locations is None or len(face_locations) == 0:
                 return None
             
             face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
@@ -107,10 +107,17 @@ class ForensicVisionEngine:
                 
                 # Match against target
                 if target_encoding is not None and 'is_frontal' in face_data:
-                    distance = face_recognition.face_distance([target_encoding], encoding)[0]
+                    distances = face_recognition.face_distance([target_encoding], encoding)
+                    if distances is None or len(distances) == 0:
+                        continue
+                    distance = float(distances[0])
                     confidence = max(0.0, 1.0 - distance)
                     
-                    if confidence >= 0.88:
+                    # Log near-matches for debugging
+                    if 0.70 <= confidence < 0.80:
+                        logger.info(f"🔶 Near Match: {confidence*100:.1f}% (below 80% threshold)")
+                    
+                    if confidence >= 0.80:
                         face_id = self._get_face_id(location)
                         if self._confirm_temporal_consistency(face_id, confidence):
                             if not target_match or confidence > target_match['confidence']:

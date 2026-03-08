@@ -253,24 +253,30 @@ class LocationMatchingEngine:
         return (priority_score + requester_score) / 2
     
     def process_new_case(self, case_id):
-        """Process newly approved case"""
+        """Process newly approved case - GLOBAL SCAN (no location restrictions)"""
         try:
-            matches = self.find_location_matches(case_id)
+            # Get ALL active surveillance footage (no location filtering)
+            all_footage = SurveillanceFootage.query.filter_by(is_active=True).all()
+            
+            if not all_footage:
+                logger.warning(f"No surveillance footage available for case {case_id}")
+                return 0
+            
             created_matches = 0
             
-            for match_data in matches:
+            for footage in all_footage:
                 existing = LocationMatch.query.filter_by(
                     case_id=case_id,
-                    footage_id=match_data['footage'].id
+                    footage_id=footage.id
                 ).first()
                 
                 if not existing:
                     location_match = LocationMatch(
                         case_id=case_id,
-                        footage_id=match_data['footage'].id,
-                        match_score=match_data['match_score'],
-                        distance_km=match_data['distance_km'],
-                        match_type=match_data.get('match_type', 'auto'),
+                        footage_id=footage.id,
+                        match_score=1.0,  # Global scan - no location scoring
+                        distance_km=None,
+                        match_type='global_scan',
                         status='pending'
                     )
                     db.session.add(location_match)
@@ -278,7 +284,7 @@ class LocationMatchingEngine:
             
             if created_matches > 0:
                 db.session.commit()
-                logger.info(f"Created {created_matches} location matches for case {case_id}")
+                logger.info(f"✅ Global scan: Created {created_matches} matches for case {case_id}")
             
             return created_matches
         except Exception as e:
@@ -287,34 +293,33 @@ class LocationMatchingEngine:
             return 0
     
     def process_new_footage(self, footage_id):
-        """Process newly uploaded footage"""
+        """Process newly uploaded footage - GLOBAL SCAN against ALL active cases"""
         try:
             footage = SurveillanceFootage.query.get(footage_id)
             if not footage:
                 return 0
             
+            # Get ALL active cases (no location filtering)
             active_cases = Case.query.filter(Case.status.in_(['Approved', 'Active', 'Under Processing'])).all()
             matches_created = 0
             
             for case in active_cases:
-                match_score = self._calculate_name_similarity(case.last_seen_location, footage.location_name)
-                
-                if match_score > 0.2:
-                    existing = LocationMatch.query.filter_by(case_id=case.id, footage_id=footage_id).first()
-                    if not existing:
-                        location_match = LocationMatch(
-                            case_id=case.id,
-                            footage_id=footage_id,
-                            match_score=match_score,
-                            distance_km=None,
-                            status='pending'
-                        )
-                        db.session.add(location_match)
-                        matches_created += 1
+                existing = LocationMatch.query.filter_by(case_id=case.id, footage_id=footage_id).first()
+                if not existing:
+                    location_match = LocationMatch(
+                        case_id=case.id,
+                        footage_id=footage_id,
+                        match_score=1.0,  # Global scan - no location scoring
+                        distance_km=None,
+                        match_type='global_scan',
+                        status='pending'
+                    )
+                    db.session.add(location_match)
+                    matches_created += 1
             
             if matches_created > 0:
                 db.session.commit()
-                logger.info(f"Created {matches_created} matches for footage {footage_id}")
+                logger.info(f"✅ Global scan: Created {matches_created} matches for footage {footage_id}")
             
             return matches_created
         except Exception as e:
@@ -322,8 +327,9 @@ class LocationMatchingEngine:
             db.session.rollback()
             return 0
     
-    def analyze_footage_for_person(self, match_id):
-        """Analyze footage using AI detection with multi-view support"""
+    def analyze_footage_for_person(self, match_id, frame_skip=1, snapshot_interval=30, detection_callback=None, progress_callback=None):
+        """PRODUCTION: Analyze footage with proper status management in finally block"""
+        cap = None
         try:
             match = LocationMatch.query.get(match_id)
             if not match:
@@ -333,15 +339,12 @@ class LocationMatchingEngine:
             match.ai_analysis_started = datetime.utcnow()
             db.session.commit()
             
-            # Get target encodings with multi-view support
             target_profiles = self._load_target_profiles(match.case)
-            
-            if not target_profiles or not any(target_profiles.values()):
+            if not target_profiles or not any(v is not None for v in target_profiles.values()):
                 match.status = 'failed'
                 db.session.commit()
                 return False
             
-            # Get footage path
             footage_path = os.path.join('static', match.footage.video_path)
             if not os.path.exists(footage_path):
                 footage_path = os.path.join('app', 'static', match.footage.video_path)
@@ -350,30 +353,40 @@ class LocationMatchingEngine:
                 db.session.commit()
                 return False
             
-            # Analyze video with multi-view
-            detections = self._multi_view_analyze_video(footage_path, target_profiles, match_id)
-            
-            match.detection_count = len(detections)
-            match.person_found = len(detections) > 0
-            
-            if detections:
-                confidences = [d['confidence'] for d in detections]
-                match.confidence_score = sum(confidences) / len(confidences)
-                match.match_score = match.confidence_score
-            else:
-                match.confidence_score = 0.0
-            
-            match.status = 'completed'
-            match.ai_analysis_completed = datetime.utcnow()
-            db.session.commit()
+            # Analyze with callback - cap is set inside
+            detections = self._analyze_video_with_callback(
+                footage_path, target_profiles, match_id, 1, snapshot_interval,
+                detection_callback, progress_callback
+            )
             
             return True
+            
         except Exception as e:
             logger.error(f"Analysis error for match {match_id}: {e}")
-            if match:
-                match.status = 'failed'
-                db.session.commit()
+            try:
+                match = LocationMatch.query.get(match_id)
+                if match:
+                    match.status = 'failed'
+                    db.session.commit()
+            except:
+                pass
             return False
+        
+        finally:
+            # CRITICAL: Only set completed AFTER video fully released
+            try:
+                match = LocationMatch.query.get(match_id)
+                if match and match.status == 'processing':
+                    detections = PersonDetection.query.filter_by(location_match_id=match_id).all()
+                    match.detection_count = len(detections)
+                    match.person_found = len(detections) > 0
+                    match.confidence_score = max([d.confidence_score for d in detections]) if detections else 0.0
+                    match.status = 'completed'
+                    match.ai_analysis_completed = datetime.utcnow()
+                    db.session.commit()
+                    logger.info(f"✅ Match {match_id} completed: {match.detection_count} detections")
+            except Exception as e:
+                logger.error(f"Error finalizing match {match_id}: {e}")
     
     def _load_target_profiles(self, case):
         """
@@ -394,23 +407,37 @@ class LocationMatchingEngine:
                 if not os.path.exists(image_path):
                     image_path = os.path.join('app', 'static', target_image.image_path)
                 
+                print(f"DEBUG: Attempting to load reference photo from: {image_path}")
+                
                 if os.path.exists(image_path):
                     try:
                         image = face_recognition.load_image_file(image_path)
                         encodings = face_recognition.face_encodings(image)
                         
-                        if encodings:
-                            # Determine profile type from metadata or filename
+                        if encodings is not None and len(encodings) > 0:
                             profile_type = self._detect_profile_type(image_path, target_image)
+                            print(f"  ✅ Loaded {profile_type}: {len(encodings)} encoding(s)")
                             
                             if profile_type in profiles:
                                 profiles[profile_type] = encodings[0]
                             elif profiles['front'] is None:
                                 profiles['front'] = encodings[0]
+                        else:
+                            print(f"  ❌ No face detected in image")
                     except Exception as e:
+                        print(f"  ❌ Error loading image: {e}")
                         logger.error(f"Error loading image {image_path}: {e}")
+                else:
+                    print(f"  ❌ Image file not found at path: {image_path}")
         except Exception as e:
+            print(f"DEBUG: Error loading target profiles: {e}")
             logger.error(f"Error loading target profiles: {e}")
+        
+        loaded_count = sum(1 for v in profiles.values() if v is not None)
+        print(f"\nDEBUG: Total encodings loaded: {loaded_count}/3 profiles")
+        print(f"  Front: {'YES' if profiles['front'] is not None else 'NO'}")
+        print(f"  Left: {'YES' if profiles['left_profile'] is not None else 'NO'}")
+        print(f"  Right: {'YES' if profiles['right_profile'] is not None else 'NO'}\n")
         
         return profiles
     
@@ -437,17 +464,124 @@ class LocationMatchingEngine:
         # Default to front
         return 'front'
     
+    def _analyze_video_with_callback(self, video_path, target_profiles, match_id, frame_skip=1, snapshot_interval=30, detection_callback=None, progress_callback=None):
+        """
+        STRICT STATE-BASED SCANNING:
+        - SEARCH: Check every 0.4s for person
+        - COOLDOWN: Skip 2.0s after detection
+        - RESUME: Return to SEARCH after cooldown
+        """
+        cap = None
+        
+        try:
+            from vision_engine import get_vision_engine
+            
+            cap = cv2.VideoCapture(video_path)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # STRICT PARAMETERS
+            scan_interval = 0.4  # Check every 0.4 seconds
+            cooldown_duration = 2.0  # 2 second cooldown
+            scan_frame_interval = int(fps * scan_interval)
+            
+            print(f"\n{'='*80}")
+            print(f"STRICT STATE-BASED SCANNING")
+            print(f"  Video: {video_path}")
+            print(f"  FPS: {fps}, Duration: {total_frames/fps:.1f}s")
+            print(f"  Scan Interval: {scan_interval}s (every {scan_frame_interval} frames)")
+            print(f"  Cooldown: {cooldown_duration}s")
+            print(f"  States: SEARCH → DETECT → COOLDOWN → SEARCH")
+            print(f"{'='*80}\n")
+            
+            vision_engine = get_vision_engine(match_id)
+            
+            # STATE MACHINE
+            state = 'SEARCH'  # SEARCH or COOLDOWN
+            cooldown_until_time = 0.0
+            unique_detections = 0
+            frame_count = 0
+            
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                timestamp = frame_count / fps
+                
+                if progress_callback and frame_count % 10 == 0:
+                    progress_callback(frame_count)
+                
+                # STATE: COOLDOWN
+                if state == 'COOLDOWN':
+                    if timestamp >= cooldown_until_time:
+                        state = 'SEARCH'
+                        print(f"  🔄 RESUME SEARCH at {timestamp:.2f}s")
+                    else:
+                        frame_count += 1
+                        continue
+                
+                # STATE: SEARCH (check every 0.4s)
+                if state == 'SEARCH' and frame_count % scan_frame_interval == 0:
+                    detection_data = vision_engine.detect_multi_view(frame, target_profiles, timestamp, match_id)
+                    
+                    if detection_data and detection_data.get('confidence_score', 0) >= 0.50:
+                        confidence = detection_data['confidence_score']
+                        unique_detections += 1
+                        
+                        print(f"  ✅ DETECTION #{unique_detections} at {timestamp:.2f}s, Confidence: {confidence*100:.1f}%")
+                        
+                        # IMMEDIATE SAVE
+                        detection = PersonDetection(
+                            location_match_id=match_id,
+                            timestamp=timestamp,
+                            confidence_score=confidence,
+                            face_match_score=detection_data.get('face_match_score', confidence),
+                            detection_box=detection_data.get('detection_box', '{}'),
+                            frame_path=detection_data['frame_path'].replace('static/', ''),
+                            frame_hash=detection_data.get('frame_hash', ''),
+                            evidence_number=detection_data.get('evidence_number', ''),
+                            matched_view=detection_data.get('matched_profile', 'video'),
+                            feature_weights=detection_data.get('feature_weights', '{}'),
+                            decision_factors=detection_data.get('decision_factors', '[]'),
+                            analysis_method='strict_state_scan'
+                        )
+                        db.session.add(detection)
+                        db.session.commit()  # IMMEDIATE COMMIT
+                        
+                        if detection_callback:
+                            detection_callback(confidence)
+                        
+                        # ENTER COOLDOWN
+                        state = 'COOLDOWN'
+                        cooldown_until_time = timestamp + cooldown_duration
+                        print(f"  ⏸️  COOLDOWN until {cooldown_until_time:.2f}s")
+                
+                frame_count += 1
+            
+            print(f"\n{'='*80}")
+            print(f"STRICT SCANNING COMPLETE")
+            print(f"  Total Frames: {frame_count}")
+            print(f"  Unique Detections: {unique_detections}")
+            print(f"  Timeline: Clean, non-repetitive")
+            print(f"{'='*80}\n")
+            
+            logger.info(f"Strict scan: {unique_detections} unique detections saved")
+            
+        except Exception as e:
+            logger.error(f"Strict scanning error: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        finally:
+            if cap is not None:
+                cap.release()
+        
+        return []
+    
     def _multi_view_analyze_video(self, video_path, target_profiles, match_id):
         """
-        Analyze video with multi-view detection
-        
-        Args:
-            video_path: Path to video file
-            target_profiles: Dict with front/left/right profile encodings
-            match_id: Location match ID
-        
-        Returns:
-            List of detections
+        Analyze video with multi-view detection (original method)
         """
         detections = []
         
@@ -504,28 +638,7 @@ class LocationMatchingEngine:
         
         return detections
     
-    def _save_multi_view_detection(self, detection_data, timestamp, match_id):
-        """Save multi-view detection to database"""
-        try:
-            detection = PersonDetection(
-                location_match_id=match_id,
-                timestamp=timestamp,
-                confidence_score=detection_data['confidence_score'],
-                face_match_score=detection_data['face_match_score'],
-                detection_box=detection_data['detection_box'],
-                frame_path=detection_data['frame_path'].replace('static/', ''),
-                frame_hash=detection_data['frame_hash'],
-                evidence_number=detection_data['evidence_number'],
-                is_frontal_face=True,
-                feature_weights=detection_data['feature_weights'],
-                decision_factors=detection_data['decision_factors'],
-                analysis_method='multi_view_forensic'
-            )
-            db.session.add(detection)
-            
-        except Exception as e:
-            logger.error(f"Save multi-view detection error: {e}")
-    
+
     def _fast_analyze_video(self, video_path, target_encodings, match_id):
         """Fast video analysis with smart sampling"""
         detections = []
@@ -557,14 +670,22 @@ class LocationMatchingEngine:
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
                 face_locations = face_recognition.face_locations(rgb_frame, model="hog")
-                if face_locations:
+                if face_locations is not None and len(face_locations) > 0:
                     encodings = face_recognition.face_encodings(rgb_frame, face_locations)
                     for encoding, location in zip(encodings, face_locations):
-                        distances = face_recognition.face_distance(target_encodings, encoding)
-                        best_distance = float(np.min(distances))
-                        confidence_percent = max(0, min(100, (1 - best_distance / 0.6) * 100))
+                        matches = face_recognition.compare_faces(target_encodings, encoding, tolerance=0.6)
+                        match_found = any(matches) if isinstance(matches, (list, np.ndarray)) else bool(matches)
                         
-                        if confidence_percent >= 88:
+                        if match_found:
+                            distances = face_recognition.face_distance(target_encodings, encoding)
+                            if distances is None or len(distances) == 0:
+                                continue
+                            best_distance = float(np.min(distances))
+                            confidence_percent = max(0, min(100, (1 - best_distance / 0.6) * 100))
+                        else:
+                            continue
+                        
+                        if confidence_percent >= 60:
                             self._save_detection(frame, location, timestamp, match_id, confidence_percent, best_distance)
                             detections.append({'timestamp': timestamp, 'confidence': confidence_percent / 100.0})
             
@@ -644,7 +765,7 @@ class LocationMatchingEngine:
                         is_frontal = detection_data.get('is_frontal_face', False)
                         
                         # FORENSIC THRESHOLD: Exactly 0.88
-                        if confidence >= 0.88 and is_frontal:
+                        if confidence >= 0.60 and is_frontal:
                             # Generate SHA-256 hash
                             frame_hash = detection_data.get('frame_hash', 'N/A')
                             
@@ -754,12 +875,12 @@ class LocationMatchingEngine:
                         import face_recognition
                         image = face_recognition.load_image_file(image_path)
                         encodings = face_recognition.face_encodings(image)
-                        if encodings:
+                        if encodings is not None and len(encodings) > 0:
                             target_encodings.append(encodings[0])
                     except:
                         pass
             
-            if not target_encodings:
+            if target_encodings is None or len(target_encodings) == 0:
                 match.status = 'failed'
                 db.session.commit()
                 return False

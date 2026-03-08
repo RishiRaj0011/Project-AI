@@ -708,6 +708,9 @@ class PersonDetection(db.Model):
     evidence_number = db.Column(db.String(20))  # Legal evidence number
     chain_hash = db.Column(db.String(64))  # Evidence chain hash
     
+    # Multi-View Detection Support
+    matched_view = db.Column(db.String(50), nullable=True)  # front, left_profile, right_profile, video
+    
     # Quality Metrics
     frame_quality_score = db.Column(db.Float, default=0.0)
     face_visibility_score = db.Column(db.Float, default=0.0)

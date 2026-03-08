@@ -1,318 +1,135 @@
 {% extends "base.html" %}
 
-{% block title %}Forensic Timeline - {{ match.case.person_name }}{% endblock %}
-
-{% block extra_css %}
-<style>
-    :root {
-        --forensic-dark: #1a1d29;
-        --forensic-darker: #0f1117;
-        --forensic-blue: #2563eb;
-        --forensic-blue-light: #3b82f6;
-        --forensic-grey: #374151;
-        --forensic-grey-light: #4b5563;
-        --forensic-success: #10b981;
-        --forensic-warning: #f59e0b;
-    }
-    
-    body { background: var(--forensic-darker); color: #e5e7eb; }
-    .forensic-header { background: linear-gradient(135deg, var(--forensic-dark) 0%, var(--forensic-blue) 100%); padding: 2rem; border-radius: 12px; margin-bottom: 2rem; }
-    .forensic-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
-    .stat-card { background: rgba(255,255,255,0.05); padding: 1rem; border-radius: 8px; border-left: 4px solid var(--forensic-blue); }
-    .stat-value { font-size: 2rem; font-weight: bold; color: var(--forensic-blue-light); }
-    .stat-label { font-size: 0.875rem; color: #9ca3af; text-transform: uppercase; }
-    
-    .filter-bar { background: var(--forensic-dark); padding: 1rem; border-radius: 8px; margin-bottom: 2rem; display: flex; gap: 1rem; align-items: center; }
-    .filter-btn { background: var(--forensic-grey); color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; transition: all 0.3s; }
-    .filter-btn:hover, .filter-btn.active { background: var(--forensic-blue); }
-    
-    .timeline-container { position: relative; padding-left: 3rem; }
-    .timeline-line { position: absolute; left: 1.5rem; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--forensic-blue), transparent); }
-    
-    .timeline-event { background: var(--forensic-dark); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; position: relative; border: 1px solid var(--forensic-grey); transition: all 0.3s; }
-    .timeline-event:hover { border-color: var(--forensic-blue); box-shadow: 0 8px 24px rgba(37, 99, 235, 0.2); transform: translateX(4px); }
-    .timeline-event::before { content: ''; position: absolute; left: -3rem; top: 1.5rem; width: 12px; height: 12px; background: var(--forensic-blue); border-radius: 50%; border: 3px solid var(--forensic-darker); }
-    
-    .event-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; }
-    .timestamp-badge { background: var(--forensic-blue); color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-weight: bold; font-size: 1.1rem; font-family: 'Courier New', monospace; }
-    .view-badge { padding: 0.4rem 0.8rem; border-radius: 6px; font-size: 0.875rem; font-weight: 600; }
-    .view-front { background: #10b981; color: #fff; }
-    .view-left { background: #f59e0b; color: #fff; }
-    .view-right { background: #8b5cf6; color: #fff; }
-    .view-video { background: #06b6d4; color: #fff; }
-    
-    .confidence-section { margin: 1rem 0; }
-    .confidence-label { font-size: 0.875rem; color: #9ca3af; margin-bottom: 0.5rem; }
-    .confidence-bar { background: var(--forensic-grey); height: 24px; border-radius: 12px; overflow: hidden; position: relative; }
-    .confidence-fill { height: 100%; background: linear-gradient(90deg, var(--forensic-success), var(--forensic-blue)); display: flex; align-items: center; justify-content: flex-end; padding-right: 0.5rem; color: #fff; font-weight: bold; font-size: 0.875rem; transition: width 0.5s; }
-    
-    .comparison-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1.5rem; align-items: center; margin: 1.5rem 0; }
-    .face-card { background: rgba(255,255,255,0.03); border-radius: 8px; padding: 1rem; text-align: center; }
-    .face-card img { width: 100%; max-width: 200px; height: 200px; object-fit: cover; border-radius: 8px; border: 2px solid var(--forensic-grey); cursor: pointer; transition: all 0.3s; }
-    .face-card img:hover { border-color: var(--forensic-blue); transform: scale(1.05); }
-    .face-label { margin-top: 0.5rem; font-size: 0.875rem; color: #9ca3af; font-weight: 600; }
-    .vs-divider { font-size: 1.5rem; font-weight: bold; color: var(--forensic-blue); }
-    
-    .evidence-metadata { background: rgba(37, 99, 235, 0.1); border-left: 4px solid var(--forensic-blue); padding: 1rem; border-radius: 6px; margin-top: 1rem; }
-    .metadata-row { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-family: 'Courier New', monospace; font-size: 0.875rem; }
-    .metadata-label { color: #9ca3af; }
-    .metadata-value { color: var(--forensic-blue-light); font-weight: 600; word-break: break-all; }
-    .hash-value { font-size: 0.75rem; }
-    
-    .action-buttons { display: flex; gap: 0.5rem; margin-top: 1rem; }
-    .btn-forensic { background: var(--forensic-blue); color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.875rem; transition: all 0.3s; }
-    .btn-forensic:hover { background: var(--forensic-blue-light); transform: translateY(-2px); }
-    .btn-secondary { background: var(--forensic-grey); }
-    .btn-secondary:hover { background: var(--forensic-grey-light); }
-    
-    .generate-report-btn { background: linear-gradient(135deg, #10b981, #059669); color: #fff; border: none; padding: 1rem 2rem; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: all 0.3s; }
-    .generate-report-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3); }
-    
-    .video-player-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); z-index: 9999; justify-content: center; align-items: center; }
-    .video-player-modal.active { display: flex; }
-    .video-container { max-width: 90%; max-height: 90%; }
-    .close-video { position: absolute; top: 2rem; right: 2rem; color: #fff; font-size: 2rem; cursor: pointer; }
-</style>
-{% endblock %}
-
 {% block content %}
 <div class="container-fluid py-4">
-    <!-- Forensic Header -->
-    <div class="forensic-header">
-        <div class="d-flex justify-content-between align-items-start">
-            <div>
-                <h2 class="mb-2"><i class="fas fa-fingerprint me-2"></i>Forensic Timeline Analysis</h2>
-                <p class="mb-0">Case: <strong>{{ match.case.person_name }}</strong> | Footage: <strong>{{ match.footage.title }}</strong></p>
-                <p class="mb-0 mt-1"><small>Location: {{ match.footage.location_name }} | Analysis Type: <span class="badge bg-success">Manual Targeted Scan</span></small></p>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-timeline me-2"></i>Forensic Timeline - {{ match.case.person_name }}</h2>
+        <a href="{{ url_for('admin.ai_analysis') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left me-2"></i>Back
+        </a>
+    </div>
+    
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card bg-success text-white">
+                <div class="card-body">
+                    <h5><i class="fas fa-check-circle me-2"></i>Total Detections</h5>
+                    <h2>{{ detections|length }}</h2>
+                </div>
             </div>
-            <button class="generate-report-btn" onclick="generateLegalReport()">
-                <i class="fas fa-file-pdf me-2"></i>Generate Legal Report
-            </button>
         </div>
-        
-        <div class="forensic-stats">
-            <div class="stat-card">
-                <div class="stat-value">{{ detections|length }}</div>
-                <div class="stat-label">Total Detections</div>
+        <div class="col-md-3">
+            <div class="card bg-info text-white">
+                <div class="card-body">
+                    <h5><i class="fas fa-star me-2"></i>High Confidence (≥88%)</h5>
+                    <h2>{{ detections|selectattr('confidence_score', 'ge', 0.88)|list|length }}</h2>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value">{{ (detections|selectattr('confidence_score', 'ge', 0.90)|list|length) }}</div>
-                <div class="stat-label">Very High Confidence</div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-warning text-dark">
+                <div class="card-body">
+                    <h5><i class="fas fa-percentage me-2"></i>Avg Confidence</h5>
+                    <h2>{{ "%.1f"|format((detections|sum(attribute='confidence_score')/detections|length*100) if detections else 0) }}%</h2>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-value">{{ "%.1f"|format((detections|map(attribute='confidence_score')|sum / detections|length * 100) if detections else 0) }}%</div>
-                <div class="stat-label">Avg Confidence</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{{ detections|length }}</div>
-                <div class="stat-label">SHA-256 Verified</div>
+        </div>
+        <div class="col-md-3">
+            <div class="card bg-primary text-white">
+                <div class="card-body">
+                    <h5><i class="fas fa-video me-2"></i>Video</h5>
+                    <h6 class="text-truncate">{{ match.footage.title }}</h6>
+                </div>
             </div>
         </div>
     </div>
     
-    <!-- Filter Bar -->
-    <div class="filter-bar">
-        <span style="color: #9ca3af; font-weight: 600;">Filter by Angle:</span>
-        <button class="filter-btn active" data-filter="all">All Views</button>
-        <button class="filter-btn" data-filter="front">Front Only</button>
-        <button class="filter-btn" data-filter="left_profile">Left Profile</button>
-        <button class="filter-btn" data-filter="right_profile">Right Profile</button>
-        <button class="filter-btn" data-filter="video">Video Frames</button>
-        <span style="margin-left: auto; color: #9ca3af;"><i class="fas fa-shield-alt me-2"></i>All evidence SHA-256 verified & tamper-proof</span>
-    </div>
-    
-    <!-- Timeline -->
-    <div class="timeline-container">
-        <div class="timeline-line"></div>
-        
-        {% for detection in detections %}
-        <div class="timeline-event" data-view="{{ detection.matched_view or 'unknown' }}">
-            <!-- Event Header -->
-            <div class="event-header">
-                <div class="d-flex gap-2 align-items-center">
-                    <span class="timestamp-badge" onclick="seekToTimestamp({{ detection.timestamp }})">
-                        <i class="fas fa-clock me-2"></i>{{ detection.formatted_timestamp }}
-                    </span>
-                    {% set view = detection.matched_view or 'unknown' %}
-                    <span class="view-badge view-{{ view.replace('_', '-') }}">
-                        {% if view == 'front' %}
-                            <i class="fas fa-user me-1"></i>Front View
-                        {% elif view == 'left_profile' %}
-                            <i class="fas fa-user-circle me-1"></i>Left Profile
-                        {% elif view == 'right_profile' %}
-                            <i class="fas fa-user-circle me-1"></i>Right Profile
-                        {% else %}
-                            <i class="fas fa-video me-1"></i>Video Frame
-                        {% endif %}
-                    </span>
-                </div>
-            </div>
-            
-            <!-- Confidence Score -->
-            <div class="confidence-section">
-                <div class="confidence-label">Forensic Accuracy (Threshold: ≥88%)</div>
-                <div class="confidence-bar">
-                    <div class="confidence-fill" style="width: {{ (detection.confidence_score * 100)|int }}%">
-                        {{ "%.1f"|format(detection.confidence_score * 100) }}%
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Side-by-Side Comparison -->
-            <div class="comparison-grid">
-                <div class="face-card">
-                    {% if match.case.primary_photo %}
-                        <img src="{{ url_for('static', filename=match.case.primary_photo.image_path) }}" alt="Target Face" onclick="openImageModal(this.src)">
-                    {% elif match.case.target_images %}
-                        <img src="{{ url_for('static', filename=match.case.target_images[0].image_path) }}" alt="Target Face" onclick="openImageModal(this.src)">
-                    {% else %}
-                        <div style="width: 200px; height: 200px; background: var(--forensic-grey); display: flex; align-items: center; justify-content: center; border-radius: 8px;">
-                            <i class="fas fa-user fa-3x" style="color: #6b7280;"></i>
-                        </div>
-                    {% endif %}
-                    <div class="face-label">TARGET FACE<br><small>(Case File)</small></div>
-                </div>
-                <div class="vs-divider">VS</div>
-                <div class="face-card">
-                    <img src="{{ url_for('static', filename=detection.frame_path) }}" alt="Detected Face" onclick="openImageModal(this.src)">
-                    <div class="face-label">DETECTED FACE<br><small>(Video Frame)</small></div>
-                </div>
-            </div>
-            
-            <!-- Evidence Metadata -->
-            <div class="evidence-metadata">
-                <div class="metadata-row">
-                    <span class="metadata-label">Evidence ID:</span>
-                    <span class="metadata-value">{{ detection.evidence_number or 'N/A' }}</span>
-                </div>
-                <div class="metadata-row">
-                    <span class="metadata-label">SHA-256 Hash:</span>
-                    <span class="metadata-value hash-value">{{ detection.frame_hash or 'N/A' }}</span>
-                </div>
-                <div class="metadata-row">
-                    <span class="metadata-label">Detection Method:</span>
-                    <span class="metadata-value">Multi-View Facial Recognition ({{ view.replace('_', ' ').title() }})</span>
-                </div>
-                <div class="metadata-row">
-                    <span class="metadata-label">Integrity Status:</span>
-                    <span class="metadata-value" style="color: var(--forensic-success);">
-                        <i class="fas fa-check-circle me-1"></i>VERIFIED & TAMPER-PROOF
-                    </span>
-                </div>
-            </div>
-            
-            <!-- Action Buttons -->
-            <div class="action-buttons">
-                <button class="btn-forensic" onclick="seekToTimestamp({{ detection.timestamp }})">
-                    <i class="fas fa-play me-1"></i>Play at Timestamp
-                </button>
-                <button class="btn-forensic btn-secondary" onclick="downloadEvidence({{ detection.id }})">
-                    <i class="fas fa-download me-1"></i>Download Evidence
-                </button>
-                <button class="btn-forensic btn-secondary" onclick="verifyHash('{{ detection.frame_hash }}')">
-                    <i class="fas fa-shield-alt me-1"></i>Verify Hash
-                </button>
-            </div>
+    <div class="card">
+        <div class="card-header bg-dark text-white">
+            <h5><i class="fas fa-stream me-2"></i>Detection Timeline (Chronological Order)</h5>
         </div>
-        {% endfor %}
-        
-        {% if not detections %}
-        <div class="text-center py-5" style="background: var(--forensic-dark); border-radius: 12px; padding: 4rem 2rem;">
-            <div style="font-size: 5rem; margin-bottom: 1.5rem; opacity: 0.3;">
-                <i class="fas fa-search"></i>
+        <div class="card-body">
+            {% if detections %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Frame</th>
+                            <th>Time</th>
+                            <th>Confidence</th>
+                            <th>View</th>
+                            <th>Evidence #</th>
+                            <th>Hash</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for detection in detections %}
+                    <tr>
+                        <td>
+                            {% if detection.frame_path %}
+                            <img src="/{{ detection.frame_path }}" class="img-thumbnail" style="max-width: 120px; cursor: pointer;" 
+                                 onclick="showFullImage('/{{ detection.frame_path }}')"
+                                 alt="Detection at {{ detection.formatted_timestamp }}">
+                            {% else %}
+                            <span class="text-muted">No frame</span>
+                            {% endif %}
+                        </td>
+                        <td><strong>{{ detection.formatted_timestamp }}</strong></td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if detection.confidence_score >= 0.88 else 'warning' if detection.confidence_score >= 0.70 else 'secondary' }}">
+                                {{ "%.1f"|format(detection.confidence_score * 100) }}%
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge bg-info">{{ detection.matched_view or 'unknown' }}</span>
+                        </td>
+                        <td>
+                            {% if detection.evidence_number %}
+                            <code class="text-primary">{{ detection.evidence_number }}</code>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if detection.frame_hash %}
+                            <code class="text-muted" style="font-size: 0.75rem;">{{ detection.frame_hash[:16] }}...</code>
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
             </div>
-            <h3 style="color: #9ca3af; margin-bottom: 1rem;">No Forensic Matches Found</h3>
-            <p class="text-muted" style="max-width: 600px; margin: 0 auto; line-height: 1.6;">
-                Deep scan completed with <strong>0.88 forensic threshold</strong>. No matches found with confidence ≥88% in this footage.
-                <br><br>
-                <strong>Possible Reasons:</strong><br>
-                • Target person not present in this footage<br>
-                • Face angles not matching available profiles<br>
-                • Video quality insufficient for recognition<br>
-                • Lighting conditions too poor
-            </p>
-            <div style="margin-top: 2rem;">
-                <button class="btn-forensic" onclick="window.history.back()">
-                    <i class="fas fa-arrow-left me-2"></i>Back to Analysis
-                </button>
-                <button class="btn-forensic btn-secondary" onclick="location.reload()">
-                    <i class="fas fa-sync me-2"></i>Refresh Results
-                </button>
+            {% else %}
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>No detections found with confidence ≥ 88%.
             </div>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
 </div>
 
-<!-- Video Player Modal -->
-<div class="video-player-modal" id="videoModal">
-    <span class="close-video" onclick="closeVideoModal()">×</span>
-    <div class="video-container">
-        <video id="forensicVideo" controls style="max-width: 100%; max-height: 90vh;">
-            <source src="{{ url_for('static', filename=match.footage.video_path) }}" type="video/mp4">
-        </video>
+<!-- Full Image Modal -->
+<div class="modal fade" id="imageModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Detection Frame</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="fullImage" src="" class="img-fluid" alt="Full detection frame">
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
-// Filter functionality
-document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', function() {
-        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        this.classList.add('active');
-        
-        const filter = this.dataset.filter;
-        document.querySelectorAll('.timeline-event').forEach(event => {
-            if (filter === 'all' || event.dataset.view === filter) {
-                event.style.display = 'block';
-            } else {
-                event.style.display = 'none';
-            }
-        });
-    });
-});
-
-// Seek to timestamp in video
-function seekToTimestamp(seconds) {
-    const modal = document.getElementById('videoModal');
-    const video = document.getElementById('forensicVideo');
-    video.currentTime = seconds;
-    modal.classList.add('active');
-    video.play();
+function showFullImage(imagePath) {
+    document.getElementById('fullImage').src = imagePath;
+    new bootstrap.Modal(document.getElementById('imageModal')).show();
 }
-
-function closeVideoModal() {
-    const modal = document.getElementById('videoModal');
-    const video = document.getElementById('forensicVideo');
-    modal.classList.remove('active');
-    video.pause();
-}
-
-// Generate legal report
-function generateLegalReport() {
-    if (confirm('Generate comprehensive legal evidence report with all detections and SHA-256 verification?')) {
-        window.location.href = '/admin/cases/{{ match.case_id }}/generate-legal-report?match_id={{ match.id }}';
-    }
-}
-
-// Download evidence
-function downloadEvidence(detectionId) {
-    window.location.href = `/admin/api/download-evidence/${detectionId}`;
-}
-
-// Verify hash
-function verifyHash(hash) {
-    alert(`SHA-256 Hash Verification:\n\n${hash}\n\nThis hash can be independently verified to ensure evidence integrity. Any tampering will result in a different hash value.`);
-}
-
-// Open image modal
-function openImageModal(src) {
-    window.open(src, '_blank', 'width=800,height=800');
-}
-
-// Close video on escape
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeVideoModal();
-});
 </script>
 {% endblock %}

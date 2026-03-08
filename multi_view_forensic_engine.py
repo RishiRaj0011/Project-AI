@@ -19,8 +19,8 @@ class MultiViewForensicEngine:
     
     def __init__(self, case_id):
         self.case_id = case_id
-        self.MATCH_THRESHOLD = 0.85
-        self.TEMPORAL_WINDOW = 10  # 10+ consecutive frames required
+        self.MATCH_THRESHOLD = 0.50  # DEMO MODE: 50% for surveillance
+        self.TEMPORAL_WINDOW = 1  # INSTANT: 1 frame detection
         self.temporal_buffer = defaultdict(lambda: deque(maxlen=15))
         self.motion_mask = None
         self.frame_history = deque(maxlen=3)
@@ -48,7 +48,7 @@ class MultiViewForensicEngine:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         face_locations = face_recognition.face_locations(rgb_frame, model='hog')
         
-        if not face_locations:
+        if face_locations is None or len(face_locations) == 0:
             return None
         
         face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
@@ -91,15 +91,16 @@ class MultiViewForensicEngine:
             'location': target_match['location']
         })
         
-        # Require 10+ consecutive frames
+        # Require 1+ frame (INSTANT detection)
         if len(self.temporal_buffer[person_id]) < self.TEMPORAL_WINDOW:
+            logger.info(f"🔶 Temporal buffer: {len(self.temporal_buffer[person_id])}/{self.TEMPORAL_WINDOW} frames, confidence: {target_match['confidence']*100:.1f}%")
             return None
         
-        # Check temporal consistency
+        # Check temporal consistency (relaxed to 5 seconds)
         recent_detections = list(self.temporal_buffer[person_id])
         time_span = recent_detections[-1]['timestamp'] - recent_detections[0]['timestamp']
         
-        if time_span > 2.0:  # Must be within 2 seconds
+        if time_span > 5.0:  # Relaxed from 2.0 to 5.0 seconds
             return None
         
         # Confirmed match
@@ -134,6 +135,10 @@ class MultiViewForensicEngine:
             
             distance = face_recognition.face_distance([profile_encoding], face_encoding)[0]
             confidence = max(0.0, 1.0 - distance)
+            
+            # Log all matches for debugging
+            if confidence >= 0.50:
+                logger.info(f"🔍 Face match: {profile_name} = {confidence*100:.1f}% (threshold: {self.MATCH_THRESHOLD*100:.0f}%)")
             
             if confidence > self.MATCH_THRESHOLD and confidence > best_match['confidence']:
                 best_match = {

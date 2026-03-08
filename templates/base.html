@@ -94,25 +94,25 @@
                         {% endif %}
                         {% if current_user.is_admin %}
                             <li class="nav-item">
-                                <a href="{{ url_for('admin.dashboard') }}" class="nav-link admin-link">
+                                <a href="/admin/dashboard" class="nav-link admin-link">
                                     <i class="fas fa-cog"></i>
                                     <span>Admin</span>
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a href="{{ url_for('admin.surveillance_footage') }}" class="nav-link admin-link">
+                                <a href="/admin/surveillance-footage" class="nav-link admin-link">
                                     <i class="fas fa-video"></i>
                                     <span>Surveillance</span>
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a href="{{ url_for('admin.ai_analysis') }}" class="nav-link admin-link">
+                                <a href="/admin/ai-analysis" class="nav-link admin-link">
                                     <i class="fas fa-brain"></i>
                                     <span>AI Analysis</span>
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a href="{{ url_for('admin.location_insights') }}" class="nav-link admin-link">
+                                <a href="/admin/location-insights" class="nav-link admin-link">
                                     <i class="fas fa-map-marked-alt"></i>
                                     <span>Locations</span>
                                 </a>
@@ -173,7 +173,7 @@
                                 <span>Dashboard</span>
                             </a>
                             {% else %}
-                            <a href="{{ url_for('admin.dashboard') }}" class="dropdown-item">
+                            <a href="/admin/dashboard" class="dropdown-item">
                                 <i class="fas fa-cog"></i>
                                 <span>Admin Dashboard</span>
                             </a>
@@ -256,10 +256,10 @@
                     <ul class="list-unstyled footer-links">
                         {% if current_user.is_authenticated %}
                             {% if current_user.is_admin %}
-                                <li><a href="{{ url_for('admin.dashboard') }}"><i class="fas fa-cog me-2"></i>Admin Panel</a></li>
-                                <li><a href="{{ url_for('admin.users') }}"><i class="fas fa-users me-2"></i>Manage Users</a></li>
-                                <li><a href="{{ url_for('admin.cases') }}"><i class="fas fa-folder me-2"></i>All Cases</a></li>
-                                <li><a href="{{ url_for('admin.analytics') }}"><i class="fas fa-chart-line me-2"></i>Analytics</a></li>
+                                <li><a href="/admin/dashboard"><i class="fas fa-cog me-2"></i>Admin Panel</a></li>
+                                <li><a href="/admin/users"><i class="fas fa-users me-2"></i>Manage Users</a></li>
+                                <li><a href="/admin/cases"><i class="fas fa-folder me-2"></i>All Cases</a></li>
+                                <li><a href="/admin/analytics"><i class="fas fa-chart-line me-2"></i>Analytics</a></li>
                             {% else %}
                                 <li><a href="{{ url_for('main.dashboard') }}"><i class="fas fa-tachometer-alt me-2"></i>Dashboard</a></li>
                                 <li><a href="{{ url_for('main.register_case') }}"><i class="fas fa-plus me-2"></i>New Case</a></li>

@@ -29,13 +29,12 @@ class FaceVectorSearchService:
         self._initialize_index()
     
     def _initialize_index(self):
-        """Initialize or load FAISS IVF index with cosine similarity"""
+        """Initialize or load FAISS index with cosine similarity"""
         if os.path.exists(self.index_path) and os.path.exists(self.mapping_path):
             self._load_index()
         else:
-            # Create IVF index for 10x faster search on large datasets
-            quantizer = faiss.IndexFlatIP(self.dimension)
-            self.index = faiss.IndexIVFFlat(quantizer, self.dimension, self.nlist, faiss.METRIC_INNER_PRODUCT)
+            # Use IndexFlatIP for stability with small datasets (no training required)
+            self.index = faiss.IndexFlatIP(self.dimension)
             self.id_mapping = []
     
     def _load_index(self):
@@ -72,8 +71,7 @@ class FaceVectorSearchService:
         vector = np.array(face_encoding, dtype=np.float32).reshape(1, -1)
         vector = self._normalize_vector(vector)
         
-        if not self.index.is_trained:
-            self.index.train(vector)
+        # IndexFlatIP doesn't require training
         self.index.add(vector)
         self.id_mapping.append(db_id)
         self._save_index()
@@ -91,8 +89,7 @@ class FaceVectorSearchService:
         vectors = np.array([enc[0] for enc in encodings], dtype=np.float32)
         vectors = np.array([self._normalize_vector(v) for v in vectors])
         
-        if not self.index.is_trained:
-            self.index.train(vectors)
+        # IndexFlatIP doesn't require training
         self.index.add(vectors)
         self.id_mapping.extend([enc[1] for enc in encodings])
         self._save_index()
@@ -111,31 +108,11 @@ class FaceVectorSearchService:
         if self.index.ntotal == 0:
             return []
         
-        # Safety check: If IVF index is not trained, fall back to flat search
-        if not self.index.is_trained:
-            import logging
-            logging.warning("IVF index not trained, falling back to IndexFlatIP")
-            # Create temporary flat index for this search
-            temp_index = faiss.IndexFlatIP(self.dimension)
-            # Get all vectors from current index
-            if hasattr(self.index, 'quantizer') and self.index.quantizer.ntotal > 0:
-                # Copy vectors from quantizer
-                vectors = np.zeros((self.index.ntotal, self.dimension), dtype=np.float32)
-                for i in range(self.index.ntotal):
-                    temp_index.add(self.index.reconstruct(i).reshape(1, -1))
-            else:
-                # Index is empty, return empty results
-                return []
-            
-            query_vector = np.array(query_encoding, dtype=np.float32).reshape(1, -1)
-            query_vector = self._normalize_vector(query_vector)
-            similarities, indices = temp_index.search(query_vector, min(top_k, temp_index.ntotal))
-        else:
-            query_vector = np.array(query_encoding, dtype=np.float32).reshape(1, -1)
-            query_vector = self._normalize_vector(query_vector)
-            
-            # Search returns cosine similarity scores (higher is better)
-            similarities, indices = self.index.search(query_vector, min(top_k, self.index.ntotal))
+        query_vector = np.array(query_encoding, dtype=np.float32).reshape(1, -1)
+        query_vector = self._normalize_vector(query_vector)
+        
+        # Search returns cosine similarity scores (higher is better)
+        similarities, indices = self.index.search(query_vector, min(top_k, self.index.ntotal))
         
         results = []
         for idx, sim in zip(indices[0], similarities[0]):
@@ -151,8 +128,8 @@ class FaceVectorSearchService:
         Args:
             person_profiles: Query result of PersonProfile.query.all()
         """
-        quantizer = faiss.IndexFlatIP(self.dimension)
-        self.index = faiss.IndexIVFFlat(quantizer, self.dimension, self.nlist, faiss.METRIC_INNER_PRODUCT)
+        # Use IndexFlatIP for stability with any dataset size
+        self.index = faiss.IndexFlatIP(self.dimension)
         self.id_mapping = []
         
         encodings = []

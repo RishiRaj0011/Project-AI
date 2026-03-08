@@ -41,7 +41,31 @@ def startup_checks(app_instance):
         try:
             from vector_search_service import get_face_search_service
             service = get_face_search_service()
-            logger.info(f"✅ FAISS: {service.get_index_size()} face encodings indexed")
+            index_size = service.get_index_size()
+            logger.info(f"✅ FAISS: {index_size} face encodings indexed")
+            
+            # Debug FAISS if 0 encodings
+            if index_size == 0:
+                from models import Case, PersonProfile
+                approved_cases = Case.query.filter(Case.status.in_(['Approved', 'Under Processing'])).count()
+                person_profiles = PersonProfile.query.count()
+                logger.warning(f"🔍 FAISS Debug: {approved_cases} Approved/Under Processing cases, {person_profiles} PersonProfile records")
+                if approved_cases == 0:
+                    logger.warning("❌ No Approved/Under Processing cases found in database - FAISS has nothing to index")
+                elif person_profiles == 0:
+                    logger.warning("❌ No PersonProfile records found - face encodings missing")
+                    logger.info("🔄 Auto-fixing: Running PersonProfile rebuild...")
+                    try:
+                        from rebuild_profiles import rebuild_missing_profiles
+                        profiles_created = rebuild_missing_profiles()
+                        if profiles_created > 0:
+                            logger.info(f"✅ Auto-fix complete: {profiles_created} profiles created")
+                        else:
+                            logger.warning("⚠️ Auto-fix: No profiles could be created - check case images")
+                    except Exception as e:
+                        logger.error(f"❌ Auto-fix failed: {e}")
+                else:
+                    logger.warning("❌ PersonProfile records exist but no face encodings - check face_encoding field")
         except Exception as e:
             logger.warning(f"⚠️ FAISS check failed: {e}")
         

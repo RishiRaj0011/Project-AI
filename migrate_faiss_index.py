@@ -1,6 +1,6 @@
 """
 FAISS Index Migration Script
-Rebuilds the FAISS index from IndexFlatIP to IndexIVFFlat for 10x faster search
+Rebuilds the FAISS index from database PersonProfile records
 """
 import sys
 import os
@@ -22,7 +22,7 @@ def migrate_faiss_index():
     
     with app.app_context():
         logger.info("="*60)
-        logger.info("FAISS Index Migration - IndexFlatIP → IndexIVFFlat")
+        logger.info("FAISS Index Rebuild - IndexFlatIP")
         logger.info("="*60)
         
         try:
@@ -33,6 +33,14 @@ def migrate_faiss_index():
             
             if len(profiles) == 0:
                 logger.warning("No person profiles found. Nothing to migrate.")
+                # Check for approved cases
+                from models import Case
+                approved_cases = Case.query.filter(Case.status.in_(['Approved', 'Under Processing'])).all()
+                logger.info(f"Debug: Found {len(approved_cases)} Approved/Under Processing cases")
+                if len(approved_cases) == 0:
+                    logger.warning("No Approved/Under Processing cases found in database")
+                else:
+                    logger.warning("Approved cases exist but no PersonProfile records found")
                 return
             
             # Get FAISS service
@@ -40,29 +48,23 @@ def migrate_faiss_index():
             service = get_face_search_service()
             
             # Rebuild index
-            logger.info("Rebuilding FAISS index with IVF implementation...")
+            logger.info("Rebuilding FAISS index...")
             service.rebuild_from_database(profiles)
             
             # Verify
             index_size = service.get_index_size()
-            logger.info(f"✅ Migration complete! Index size: {index_size} encodings")
-            
-            # Performance info
-            if index_size > 10000:
-                logger.info(f"🚀 Expected search speedup: ~10x faster")
-            else:
-                logger.info(f"ℹ️  For datasets >10k faces, you'll see significant speedup")
+            logger.info(f"✅ Rebuild complete! Index size: {index_size} encodings")
             
             logger.info("="*60)
-            logger.info("Migration successful!")
+            logger.info("Rebuild successful!")
             logger.info("="*60)
             
         except Exception as e:
-            logger.error(f"❌ Migration failed: {str(e)}")
+            logger.error(f"❌ Rebuild failed: {str(e)}")
             logger.error("Please check the error and try again")
             raise
 
 if __name__ == "__main__":
-    logger.info("Starting FAISS index migration...")
+    logger.info("Starting FAISS index rebuild...")
     migrate_faiss_index()
-    logger.info("Migration script completed")
+    logger.info("Rebuild script completed")

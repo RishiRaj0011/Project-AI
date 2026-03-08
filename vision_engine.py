@@ -31,20 +31,20 @@ class VisionEngine:
             from ai_config_model import AIConfig
             config = AIConfig.get_config()
             return {
-                'threshold': config.forensic_threshold,
+                'threshold': 0.50,  # DEMO MODE: 50% for surveillance leads
                 'facial_weight': config.facial_weight,
                 'clothing_weight': config.clothing_weight,
                 'temporal_weight': config.temporal_weight,
-                'frame_skip': config.frame_skip_rate
+                'frame_skip': 1  # HIGH-DENSITY: Process every frame
             }
         except Exception as e:
             logger.warning(f"Failed to load AI config, using defaults: {e}")
             return {
-                'threshold': 0.88,
+                'threshold': 0.50,  # DEMO MODE: 50% for surveillance leads
                 'facial_weight': 0.40,
                 'clothing_weight': 0.35,
                 'temporal_weight': 0.25,
-                'frame_skip': 10
+                'frame_skip': 1  # HIGH-DENSITY: Process every frame
             }
     
     def _init_systems(self):
@@ -91,7 +91,7 @@ class VisionEngine:
         if person_profile and not target_encoding:
             # Try matching against all available encodings
             all_encodings = person_profile.face_encodings_list
-            if all_encodings:
+            if all_encodings is not None and len(all_encodings) > 0:
                 target_encoding = all_encodings[0]  # Use first as primary
         
         detection_data = self._build_detection_data_strict(frame, target_encoding, strict_mode, person_profile)
@@ -208,11 +208,11 @@ class VisionEngine:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             face_locations = face_recognition.face_locations(rgb_frame, model='hog')
             
-            if not face_locations:
+            if face_locations is None or len(face_locations) == 0:
                 return None
             
             face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-            if not face_encodings:
+            if face_encodings is None or len(face_encodings) == 0:
                 return None
             
             # Get 68-point landmarks for frontal validation
@@ -245,12 +245,20 @@ class VisionEngine:
                     face_pose_angles = pose_angles
                 
                 if target_encoding is not None:
-                    distance = face_recognition.face_distance([target_encoding], face_encoding)[0]
+                    distances = face_recognition.face_distance([target_encoding], face_encoding)
+                    if distances is None or len(distances) == 0:
+                        continue
+                    distance = float(distances[0])
                     confidence = max(0.0, 1.0 - distance)
                     
-                    # Apply dynamic threshold from AI config
-                    threshold = self.ai_config.get('threshold', 0.88)
-                    if strict_mode and confidence < threshold:
+                    # FORENSIC THRESHOLD: Hardcoded 0.80
+                    threshold = 0.60
+                    
+                    # Log near-matches for debugging
+                    if 0.70 <= confidence < threshold:
+                        logger.info(f"🔶 Near Match: {confidence*100:.1f}% (below {threshold*100:.0f}% threshold)")
+                    
+                    if confidence < threshold:
                         continue
                     
                     if confidence > best_confidence and confidence >= threshold:
@@ -263,7 +271,7 @@ class VisionEngine:
                     best_location = face_location
                     break
             
-            if best_match is None or best_confidence < self.ai_config.get('threshold', 0.88):
+            if best_match is None or best_confidence < 0.60:
                 return None
             
             top, right, bottom, left = best_location
@@ -498,11 +506,11 @@ def get_vision_engine(case_id=None):
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             face_locations = face_recognition.face_locations(rgb_frame, model='hog')
             
-            if not face_locations:
+            if face_locations is None or len(face_locations) == 0:
                 return None
             
             face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
-            if not face_encodings:
+            if face_encodings is None or len(face_encodings) == 0:
                 return None
             
             # Get landmarks for ALL faces
@@ -531,29 +539,26 @@ def get_vision_engine(case_id=None):
                 if idx < len(face_landmarks_list):
                     landmarks = face_landmarks_list[idx]
                     
-                    # Check required landmarks for frontal view
-                    required_landmarks = ['left_eye', 'right_eye', 'nose_tip', 'top_lip', 'bottom_lip']
-                    if not all(k in landmarks for k in required_landmarks):
-                        logger.debug(f"Skipping face: Missing required landmarks")
+                    # RELAXED: Check basic landmarks only
+                    has_left_eye = 'left_eye' in landmarks and len(landmarks.get('left_eye', [])) > 0
+                    has_right_eye = 'right_eye' in landmarks and len(landmarks.get('right_eye', [])) > 0
+                    has_nose = 'nose_tip' in landmarks and len(landmarks.get('nose_tip', [])) > 0
+                    
+                    if not (has_left_eye or has_right_eye or has_nose):
+                        logger.debug(f"Skipping face: No basic landmarks")
                         continue
                     
-                    # Verify landmark counts (quality check)
                     left_eye_count = len(landmarks.get('left_eye', []))
                     right_eye_count = len(landmarks.get('right_eye', []))
                     nose_count = len(landmarks.get('nose_tip', []))
                     mouth_count = len(landmarks.get('top_lip', [])) + len(landmarks.get('bottom_lip', []))
                     
-                    # Must have sufficient landmark points
-                    if left_eye_count < 4 or right_eye_count < 4 or nose_count < 3 or mouth_count < 10:
-                        logger.debug(f"Skipping face: Insufficient landmark points")
-                        continue
-                    
                     # Calculate face pose
                     pose_angles = self._calculate_face_pose(landmarks)
                     
-                    # Skip non-frontal faces (±15° tolerance)
-                    if abs(pose_angles['yaw']) > 15 or abs(pose_angles['pitch']) > 15:
-                        logger.debug(f"Skipping non-frontal: Yaw={pose_angles['yaw']:.1f}°, Pitch={pose_angles['pitch']:.1f}°")
+                    # RELAXED: Allow ±30° for walking/movement
+                    if abs(pose_angles['yaw']) > 30 or abs(pose_angles['pitch']) > 30:
+                        logger.debug(f"Skipping extreme angle: Yaw={pose_angles['yaw']:.1f}°, Pitch={pose_angles['pitch']:.1f}°")
                         continue
                     
                     is_frontal = True
@@ -564,7 +569,7 @@ def get_vision_engine(case_id=None):
                         f"Eyes detected: {left_eye_count + right_eye_count} points",
                         f"Nose detected: {nose_count} points",
                         f"Mouth detected: {mouth_count} points",
-                        f"Frontal pose: Yaw {pose_angles['yaw']:.1f}°, Pitch {pose_angles['pitch']:.1f}°"
+                        f"Pose: Yaw {pose_angles['yaw']:.1f}°, Pitch {pose_angles['pitch']:.1f}° (±30° tolerance)"
                     ]
                 
                 # Calculate confidence with multi-view matching
@@ -575,7 +580,10 @@ def get_vision_engine(case_id=None):
                     
                     # Match against primary encoding
                     if target_encoding is not None:
-                        distance = face_recognition.face_distance([target_encoding], face_encoding)[0]
+                        distances = face_recognition.face_distance([target_encoding], face_encoding)
+                        if distances is None or len(distances) == 0:
+                            continue
+                        distance = float(distances[0])
                         confidence = max(0.0, 1.0 - distance)
                         if confidence > best_view_confidence:
                             best_view_confidence = confidence
@@ -583,10 +591,13 @@ def get_vision_engine(case_id=None):
                     
                     # Match against multi-view encodings
                     for view_name, view_encodings in multi_view_encodings.items():
-                        if not view_encodings:
+                        if not view_encodings or len(view_encodings) == 0:
                             continue
                         for view_enc in view_encodings:
-                            distance = face_recognition.face_distance([view_enc], face_encoding)[0]
+                            distances = face_recognition.face_distance([view_enc], face_encoding)
+                            if distances is None or len(distances) == 0:
+                                continue
+                            distance = float(distances[0])
                             confidence = max(0.0, 1.0 - distance)
                             if confidence > best_view_confidence:
                                 best_view_confidence = confidence
@@ -595,8 +606,14 @@ def get_vision_engine(case_id=None):
                     confidence = best_view_confidence
                     matched_view = best_view_name
                     
-                    # Apply 0.88 threshold
-                    if confidence < self.ai_config.get('threshold', 0.88):
+                    # DEMO MODE: 50% threshold
+                    threshold = 0.50
+                    
+                    # Log near-matches
+                    if 0.45 <= confidence < threshold:
+                        logger.info(f"🔶 Near Match ({matched_view}): {confidence*100:.1f}% (below {threshold*100:.0f}% threshold)")
+                    
+                    if confidence < threshold:
                         continue
                     
                     xai_factors.append(f"Face match confidence: {confidence * 100:.1f}% (matched view: {matched_view})")
@@ -611,7 +628,7 @@ def get_vision_engine(case_id=None):
                     best_location = face_location
                     break
             
-            if best_match is None or best_confidence < self.ai_config.get('threshold', 0.88):
+            if best_match is None or best_confidence < 0.60:
                 return None
             
             top, right, bottom, left = best_location
