@@ -38,22 +38,71 @@ class FaceVectorSearchService:
             self.id_mapping = []
     
     def _load_index(self):
-        """Load existing FAISS index and ID mapping"""
+        """Load existing FAISS index and ID mapping with backup and admin alerts"""
         try:
             self.index = faiss.read_index(self.index_path)
             with open(self.mapping_path, 'rb') as f:
                 self.id_mapping = pickle.load(f)
+            print(f"✅ FAISS index loaded: {self.index.ntotal} encodings")
         except Exception as e:
-            print(f"Error loading index: {e}. Creating new index.")
+            print(f"❌ FAISS index load error: {e}")
+            
+            # Try backup restore
+            backup_path = self.index_path + '.backup'
+            if os.path.exists(backup_path):
+                try:
+                    self.index = faiss.read_index(backup_path)
+                    with open(self.mapping_path + '.backup', 'rb') as f:
+                        self.id_mapping = pickle.load(f)
+                    print(f"✅ Restored from backup: {self.index.ntotal} encodings")
+                    self._save_index()  # Save as primary
+                    self._send_admin_alert('FAISS index restored from backup', 'warning')
+                    return
+                except:
+                    pass
+            
+            # Alert admin about data loss
+            self._send_admin_alert(f'FAISS index corrupt - creating new (data loss!): {e}', 'critical')
             self.index = faiss.IndexFlatIP(self.dimension)
             self.id_mapping = []
     
     def _save_index(self):
-        """Save FAISS index and ID mapping to disk"""
+        """Save FAISS index with automatic backup"""
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
+        
+        # Create backup before saving
+        if os.path.exists(self.index_path):
+            import shutil
+            shutil.copy2(self.index_path, self.index_path + '.backup')
+            shutil.copy2(self.mapping_path, self.mapping_path + '.backup')
+        
         faiss.write_index(self.index, self.index_path)
         with open(self.mapping_path, 'wb') as f:
             pickle.dump(self.id_mapping, f)
+    
+    def _send_admin_alert(self, message: str, level: str = 'warning'):
+        """Send alert to admin about FAISS issues"""
+        try:
+            from models import Notification, User, db
+            from datetime import datetime
+            
+            # Get all admin users
+            admins = User.query.filter_by(is_admin=True).all()
+            
+            for admin in admins:
+                notification = Notification(
+                    user_id=admin.id,
+                    title=f'🚨 FAISS Index Alert',
+                    message=message,
+                    type='danger' if level == 'critical' else 'warning',
+                    created_at=datetime.utcnow()
+                )
+                db.session.add(notification)
+            
+            db.session.commit()
+            print(f"✅ Admin alert sent: {message}")
+        except Exception as e:
+            print(f"❌ Failed to send admin alert: {e}")
     
     def _normalize_vector(self, vector: np.ndarray) -> np.ndarray:
         """Normalize vector for cosine similarity"""

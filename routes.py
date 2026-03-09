@@ -38,6 +38,7 @@ from forms import (
     NewCaseForm,
     ContactForm,
 )
+from wtforms import MultipleFileField
 
 from system_monitor import start_system_monitoring
 from security_automation import start_security_automation, process_security_event

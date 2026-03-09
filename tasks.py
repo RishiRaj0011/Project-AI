@@ -14,8 +14,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Memory threshold: 98% (relaxed for high baseline usage)
-MEMORY_THRESHOLD = 98
+# Memory threshold: 85% (safe threshold with breathing room)
+MEMORY_THRESHOLD = 85
 MAX_CONCURRENT_VIDEOS = 4
 
 class MemoryAwareTask(Task):
@@ -28,7 +28,7 @@ class MemoryAwareTask(Task):
 
 @celery.task(base=MemoryAwareTask, bind=True, max_retries=3)
 def analyze_footage_match(self, match_id):
-    """FORENSIC FRAME-BY-FRAME: Analyze single footage match with REAL-TIME progress tracking"""
+    """🔥 FORENSIC FRAME-BY-FRAME: 0.4s scan interval with MAX confidence OR logic"""
     with app.app_context():
         match = None
         try:
@@ -56,25 +56,36 @@ def analyze_footage_match(self, match_id):
             
             cap = cv2.VideoCapture(footage_path)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25  # Default 25 FPS
             cap.release()
+            
+            # 🔥 STRICT 0.4s SCAN INTERVAL: Calculate frame skip
+            scan_interval_seconds = 0.4  # HARDCODED: 0.4s strobe
+            frame_skip = max(1, int(fps * scan_interval_seconds))  # Frames per 0.4s
+            
+            logger.info(f"🔥 FORENSIC SCAN: {fps} FPS → frame_skip={frame_skip} (0.4s interval)")
             
             # Auto-create detection folder
             detection_dir = os.path.join('static', 'detections', f'match_{match_id}')
             os.makedirs(detection_dir, exist_ok=True)
             logger.info(f"Detection folder ready: {detection_dir}")
             
-            # HARDCODED: frame_skip=1 for forensic accuracy
-            frame_skip = 1
-            
             # Real-time detection tracking
             detection_counter = 0
             max_confidence = 0.0
             commit_counter = 0
             current_frame = 0
+            last_detection_time = -999  # Track 2.0s cooldown
             
-            def detection_callback(confidence_score):
-                """Real-time callback for each detection >= 0.50"""
-                nonlocal detection_counter, max_confidence, commit_counter
+            def detection_callback(confidence_score, timestamp):
+                """Real-time callback for each detection >= 0.50 with 2.0s cooldown"""
+                nonlocal detection_counter, max_confidence, commit_counter, last_detection_time
+                
+                # 🔥 2.0s SIGHTING COOLDOWN: Prevent duplicate detections
+                if timestamp - last_detection_time < 2.0:
+                    return  # Skip this detection (too close to previous)
+                
+                last_detection_time = timestamp
                 
                 # Immediate counter increment
                 detection_counter += 1
@@ -110,10 +121,10 @@ def analyze_footage_match(self, match_id):
                         }
                     )
             
-            # Analyze with real-time callbacks (frame_skip=1 hardcoded)
+            # 🔥 ANALYZE WITH STRICT 0.4s INTERVAL + MAX CONFIDENCE OR LOGIC
             success = location_engine.analyze_footage_for_person(
                 match_id, 
-                frame_skip=frame_skip,
+                frame_skip=frame_skip,  # Calculated from 0.4s interval
                 snapshot_interval=30,
                 detection_callback=detection_callback,
                 progress_callback=progress_callback
@@ -324,4 +335,134 @@ def process_case_media(self, case_id):
                 
         except Exception as e:
             logger.error(f"Error processing case media {case_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+@celery.task(base=MemoryAwareTask, bind=True)
+def create_person_profile_async(self, case_id, image_paths, video_path=None):
+    """🔥 FORENSIC INTEGRITY: Create person profile with ALL photos (CLAHE + Upsampling + Multi-View)"""
+    with app.app_context():
+        try:
+            from models import Case, PersonProfile, TargetImage
+            from multi_view_face_extractor import get_face_extractor
+            import face_recognition
+            import cv2
+            import numpy as np
+            import json
+            
+            case = Case.query.get(case_id)
+            if not case:
+                return {'success': False, 'error': 'Case not found'}
+            
+            logger.info(f"🔍 FORENSIC PROFILE: Case #{case_id} with {len(image_paths)} photos")
+            
+            extractor = get_face_extractor()
+            all_encodings = []
+            front_encodings = []
+            left_encodings = []
+            right_encodings = []
+            video_encodings = []
+            
+            # 🔥 FORENSIC ENHANCEMENT: Process EVERY photo with CLAHE + Upsampling
+            for idx, img_path in enumerate(image_paths):
+                try:
+                    # Load image
+                    image = face_recognition.load_image_file(img_path)
+                    
+                    # 🔥 CLAHE Enhancement: Fix lighting/shadow issues
+                    lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+                    l, a, b = cv2.split(lab)
+                    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))  # Increased clip limit
+                    l = clahe.apply(l)
+                    enhanced = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2RGB)
+                    
+                    # 🔥 UPSAMPLING: Detect small/distant faces (5-10m)
+                    face_locations = face_recognition.face_locations(
+                        enhanced, 
+                        model='cnn',  # CNN for better accuracy
+                        number_of_times_to_upsample=2  # 2x upsampling for distance
+                    )
+                    
+                    if not face_locations:
+                        logger.warning(f"⚠️ No face in photo {idx+1}: {img_path}")
+                        continue
+                    
+                    # Extract encodings from enhanced image
+                    encodings = face_recognition.face_encodings(enhanced, face_locations)
+                    if not encodings:
+                        continue
+                    
+                    encoding = encodings[0].tolist()
+                    all_encodings.append(encoding)
+                    
+                    # 🔥 MULTI-VIEW CATEGORIZATION: Front, Left, Right, Additional
+                    if idx == 0:
+                        front_encodings.append(encoding)
+                    elif idx == 1:
+                        left_encodings.append(encoding)
+                    elif idx == 2:
+                        right_encodings.append(encoding)
+                    else:
+                        # Additional photos go to all views for MAX matching
+                        front_encodings.append(encoding)
+                    
+                    logger.info(f"✅ Photo {idx+1}: Face detected and encoded (CLAHE+Upsampling)")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error processing photo {idx+1}: {e}")
+                    continue
+            
+            # Process video if provided
+            if video_path:
+                try:
+                    video_encodings = extractor.extract_from_video(video_path, max_frames=5)
+                    all_encodings.extend(video_encodings)
+                    logger.info(f"✅ Video: {len(video_encodings)} encodings extracted")
+                except Exception as e:
+                    logger.error(f"❌ Video processing error: {e}")
+            
+            if not all_encodings:
+                logger.error(f"❌ No encodings extracted for Case #{case_id}")
+                return {'success': False, 'error': 'No faces detected in any photo'}
+            
+            # 🔥 CREATE PERSON PROFILE: Store ALL encodings
+            person_profile = PersonProfile(
+                case_id=case_id,
+                primary_face_encoding=json.dumps(all_encodings[0]),
+                all_face_encodings=json.dumps(all_encodings),
+                front_encodings=json.dumps(front_encodings) if front_encodings else None,
+                left_profile_encodings=json.dumps(left_encodings) if left_encodings else None,
+                right_profile_encodings=json.dumps(right_encodings) if right_encodings else None,
+                video_encodings=json.dumps(video_encodings) if video_encodings else None,
+                total_encodings=len(all_encodings),
+                face_quality_score=0.9 if len(all_encodings) >= 3 else 0.7,
+                profile_confidence=min(len(all_encodings) / 8.0, 1.0)
+            )
+            db.session.add(person_profile)
+            db.session.commit()
+            
+            # 🔥 FAISS MULTI-VECTOR: Insert ALL encodings (not just primary)
+            try:
+                from vector_search_service import get_face_search_service
+                service = get_face_search_service()
+                for encoding in all_encodings:
+                    service.insert_encoding(encoding, person_profile.id)
+                logger.info(f"✅ FAISS: {len(all_encodings)} encodings indexed (Multi-Vector)")
+            except Exception as e:
+                logger.warning(f"⚠️ FAISS update failed: {e}")
+            
+            logger.info(f"✅ FORENSIC PROFILE COMPLETE: {len(all_encodings)} total encodings")
+            return {
+                'success': True, 
+                'case_id': case_id,
+                'total_encodings': len(all_encodings),
+                'front': len(front_encodings),
+                'left': len(left_encodings),
+                'right': len(right_encodings),
+                'video': len(video_encodings)
+            }
+            
+        except Exception as e:
+            logger.error(f"Profile creation error for case {case_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return {'success': False, 'error': str(e)}

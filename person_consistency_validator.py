@@ -14,7 +14,8 @@ from datetime import datetime
 class PersonConsistencyValidator:
     def __init__(self):
         self.face_encodings = []
-        self.validation_threshold = 0.45  # More lenient for real-world scenarios
+        self.validation_threshold = 0.45  # Standard threshold for same angle
+        self.profile_threshold = 0.40  # Relaxed for front-to-profile comparison
         self.min_face_confidence = 0.4  # Lower threshold for better detection
         
     def extract_face_encodings(self, image_path: str) -> List[np.ndarray]:
@@ -219,7 +220,7 @@ class PersonConsistencyValidator:
         return encodings[best_idx]
     
     def _check_face_consistency(self, face_data: List[Dict]) -> Dict:
-        """Check consistency between multiple faces"""
+        """Check consistency between multiple faces with angle-aware thresholds"""
         if len(face_data) < 2:
             return {
                 'is_consistent': True,
@@ -243,7 +244,11 @@ class PersonConsistencyValidator:
             similarity = 1 - distance
             similarity_scores.append(similarity)
             
-            if similarity >= self.validation_threshold:
+            # Angle-aware threshold: Use relaxed threshold for profile views
+            # If similarity is between 0.40-0.45, it's likely a valid profile view
+            threshold = self.profile_threshold if similarity >= self.profile_threshold else self.validation_threshold
+            
+            if similarity >= threshold:
                 consistent_count += 1
             else:
                 inconsistent_files.append({

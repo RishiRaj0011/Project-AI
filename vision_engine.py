@@ -495,7 +495,7 @@ def get_vision_engine(case_id=None):
             return ""
     
     def _build_detection_data_strict(self, frame, target_encoding, strict_mode=True, person_profile=None):
-        """Build detection with STRICT landmark filtering: 2 eyes + nose + mouth required
+        """🔥 FORENSIC DETECTION: CLAHE + Upsampling + Multi-View OR Logic
         
         Args:
             person_profile: PersonProfile with multi-view encodings for better matching
@@ -503,8 +503,24 @@ def get_vision_engine(case_id=None):
         try:
             import face_recognition
             
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            face_locations = face_recognition.face_locations(rgb_frame, model='hog')
+            # 🔥 CLAHE PRE-PROCESSING: Fix lighting/shadow issues
+            try:
+                lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                l = clahe.apply(l)
+                enhanced_frame = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+            except:
+                enhanced_frame = frame  # Fallback to original
+            
+            rgb_frame = cv2.cvtColor(enhanced_frame, cv2.COLOR_BGR2RGB)
+            
+            # 🔥 UPSAMPLING: Detect small/distant faces (5-10m)
+            face_locations = face_recognition.face_locations(
+                rgb_frame, 
+                model='cnn',  # CNN for better accuracy
+                number_of_times_to_upsample=2  # 2x upsampling for distance
+            )
             
             if face_locations is None or len(face_locations) == 0:
                 return None
@@ -535,11 +551,10 @@ def get_vision_engine(case_id=None):
                 }
             
             for idx, (face_encoding, face_location) in enumerate(zip(face_encodings, face_locations)):
-                # STRICT LANDMARK CHECK: Must have 2 eyes + nose + mouth
+                # RELAXED LANDMARK CHECK: Basic validation only
                 if idx < len(face_landmarks_list):
                     landmarks = face_landmarks_list[idx]
                     
-                    # RELAXED: Check basic landmarks only
                     has_left_eye = 'left_eye' in landmarks and len(landmarks.get('left_eye', [])) > 0
                     has_right_eye = 'right_eye' in landmarks and len(landmarks.get('right_eye', [])) > 0
                     has_nose = 'nose_tip' in landmarks and len(landmarks.get('nose_tip', [])) > 0
@@ -566,30 +581,29 @@ def get_vision_engine(case_id=None):
                     
                     # Build XAI factors
                     xai_factors = [
+                        f"CLAHE enhanced + 2x upsampling applied",
                         f"Eyes detected: {left_eye_count + right_eye_count} points",
                         f"Nose detected: {nose_count} points",
                         f"Mouth detected: {mouth_count} points",
                         f"Pose: Yaw {pose_angles['yaw']:.1f}°, Pitch {pose_angles['pitch']:.1f}° (±30° tolerance)"
                     ]
                 
-                # Calculate confidence with multi-view matching
+                # 🔥 MULTI-VIEW OR LOGIC: Match against ALL encodings, take MAX confidence
                 if target_encoding is not None or multi_view_encodings:
-                    # Try matching against all available encodings
                     best_view_confidence = 0.0
                     best_view_name = 'primary'
                     
                     # Match against primary encoding
                     if target_encoding is not None:
                         distances = face_recognition.face_distance([target_encoding], face_encoding)
-                        if distances is None or len(distances) == 0:
-                            continue
-                        distance = float(distances[0])
-                        confidence = max(0.0, 1.0 - distance)
-                        if confidence > best_view_confidence:
-                            best_view_confidence = confidence
-                            best_view_name = 'primary'
+                        if distances is not None and len(distances) > 0:
+                            distance = float(distances[0])
+                            confidence = max(0.0, 1.0 - distance)
+                            if confidence > best_view_confidence:
+                                best_view_confidence = confidence
+                                best_view_name = 'primary'
                     
-                    # Match against multi-view encodings
+                    # 🔥 OR STRATEGY: Match against ALL views (Front, Left, Right, Video)
                     for view_name, view_encodings in multi_view_encodings.items():
                         if not view_encodings or len(view_encodings) == 0:
                             continue
@@ -599,6 +613,7 @@ def get_vision_engine(case_id=None):
                                 continue
                             distance = float(distances[0])
                             confidence = max(0.0, 1.0 - distance)
+                            # OR strategy: Take MAX confidence across all views
                             if confidence > best_view_confidence:
                                 best_view_confidence = confidence
                                 best_view_name = view_name
@@ -606,17 +621,19 @@ def get_vision_engine(case_id=None):
                     confidence = best_view_confidence
                     matched_view = best_view_name
                     
-                    # DEMO MODE: 50% threshold
+                    # 🔥 THRESHOLD: 0.50 (50%) for any view match
                     threshold = 0.50
                     
                     # Log near-matches
                     if 0.45 <= confidence < threshold:
-                        logger.info(f"🔶 Near Match ({matched_view}): {confidence*100:.1f}% (below {threshold*100:.0f}% threshold)")
+                        logger.info(f"Near Match ({matched_view}): {confidence*100:.1f}% (below {threshold*100:.0f}% threshold)")
                     
+                    # OR strategy: If ANY view hits threshold, it's a match
                     if confidence < threshold:
                         continue
                     
-                    xai_factors.append(f"Face match confidence: {confidence * 100:.1f}% (matched view: {matched_view})")
+                    xai_factors.append(f"Best match: {matched_view} view at {confidence * 100:.1f}%")
+                    xai_factors.append(f"OR strategy: MAX confidence across all views")
                     
                     if confidence > best_confidence:
                         best_confidence = confidence
@@ -628,7 +645,7 @@ def get_vision_engine(case_id=None):
                     best_location = face_location
                     break
             
-            if best_match is None or best_confidence < 0.60:
+            if best_match is None or best_confidence < 0.50:
                 return None
             
             top, right, bottom, left = best_location
@@ -646,14 +663,15 @@ def get_vision_engine(case_id=None):
                 'timestamp': 0.0,
                 'case_id': self.case_id or 0,
                 'footage_id': 0,
-                'method': f'multi_view_strict_{matched_view}',
+                'method': f'forensic_clahe_upsample_{matched_view}',
                 'is_frontal_face': is_frontal,
                 'face_pose_yaw': face_pose_angles['yaw'] if face_pose_angles else 0,
                 'face_pose_pitch': face_pose_angles['pitch'] if face_pose_angles else 0,
                 'decision_factors': json.dumps(xai_factors),
                 'feature_weights': json.dumps({
-                    'facial_landmarks': {'score': 1.0, 'weight': 0.4},
-                    'face_match': {'score': best_confidence, 'weight': 0.6}
+                    'clahe_enhancement': {'score': 1.0, 'weight': 0.2},
+                    'upsampling_2x': {'score': 1.0, 'weight': 0.2},
+                    'multi_view_or_logic': {'score': best_confidence, 'weight': 0.6}
                 }),
                 'evidence_number': f"EVD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
                 'frame_hash': '',  # Will be generated during save
@@ -669,6 +687,6 @@ def get_vision_engine(case_id=None):
             }
             
         except Exception as e:
-            logger.error(f"Strict detection error: {e}")
+            logger.error(f"Forensic detection error: {e}")
             return None
 

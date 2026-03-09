@@ -2,6 +2,11 @@
 *.db
 *.sqlite3
 
+# Redis Data (IMPORTANT)
+dump.rdb
+*.rdb
+redis-data/
+
 # Environment & Credentials (IMPORTANT)
 .env
 .env.*
