@@ -118,6 +118,18 @@ python
 ```
 
 ---
+Screenshots:
+
+These are the screen shot of the project after runnign the application 
+
+<img width="1600" height="751" alt="WhatsApp Image 2026-04-21 at 16 17 47 (1)" src="https://github.com/user-attachments/assets/82c32ba0-f48f-44c4-b1b1-2feb91416d15" />
+<img width="1600" height="772" alt="WhatsApp Image 2026-04-21 at 16 17 47" src="https://github.com/user-attachments/assets/c130c065-a57a-4bbe-96e2-159c14124cb7" />
+<img width="1600" height="766" alt="WhatsApp Image 2026-04-21 at 16 17 48 (1)" src="https://github.com/user-attachments/assets/93f0c4c4-ffae-49d2-ad5f-2c9b6e763946" />
+<img width="1600" height="765" alt="WhatsApp Image 2026-04-21 at 16 17 48 (2)" src="https://github.com/user-attachments/assets/f6c81f7a-650a-4fad-b631-03977f848f73" />
+<img width="1600" height="759" alt="WhatsApp Image 2026-04-21 at 16 17 48 (3)" src="https://github.com/user-attachments/assets/df7ef22a-d555-4d72-b415-3a2d28d2005f" />
+<img width="1600" height="761" alt="WhatsApp Image 2026-04-21 at 16 17 46" src="https://github.com/user-attachments/assets/654b60de-e774-469c-b1c3-82f130e7043d" />
+<img width="1600" height="777" alt="WhatsApp Image 2026-04-21 at 16 17 48" src="https://github.com/user-attachments/assets/ae1d390f-e5dc-4405-bce9-802603ff750a" />
+
 
 ## ▶️ Running the Application
 
